@@ -1,0 +1,7 @@
+build/
+deprecated/
+.DS_Store
+keys.py
+*.crt
+*.key
+*.pem
