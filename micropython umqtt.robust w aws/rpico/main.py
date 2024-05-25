@@ -39,7 +39,7 @@ def mqtt_setup():
     mqtt_client = robust.MQTTClient(
         client_id = ubinascii.hexlify(machine.unique_id()),
         server = keys.MQTT_BROKER,
-        keepalive = 60,
+        keepalive = 30,
         ssl = True,
         ssl_params = {
             "key": read_pem(keys.MQTT_CLIENT_KEY),
