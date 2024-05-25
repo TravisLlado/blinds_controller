@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "session": {
+    "new": true,
+    "sessionId": "amzn1.echo-api.session.[unique-value]",
+    "application": {
+      "applicationId": "amzn1.ask.skill.[unique-value]"
+    },
+    "user": {
+      "userId": "amzn1.ask.account.[unique-value]"
+    }
+  },
+  "context": {
+    "System": {
+      "application": {
+        "applicationId": "amzn1.ask.skill.[unique-value]"
+      },
+      "user": {
+        "userId": "amzn1.ask.account.[unique-value]"
+      },
+      "device": {
+        "deviceId": "amzn1.ask.device.[unique-value]",
+        "supportedInterfaces": {}
+      }
+    }
+  },
+  "request": {
+    "type": "IntentRequest",
+    "requestId": "amzn1.echo-api.request.[unique-value]",
+    "timestamp": "2024-05-23T20:30:05Z",
+    "locale": "en-US",
+    "intent": {
+      "name": "OpenBlindsIntent",
+      "confirmationStatus": "NONE",
+      "slots": {}
+    }
+  }
+}

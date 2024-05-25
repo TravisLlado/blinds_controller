@@ -1,0 +1,79 @@
+{
+  "interactionModel": {
+      "languageModel": {
+          "invocationName": "python test",
+          "intents": [
+              {
+                  "name": "AMAZON.CancelIntent",
+                  "samples": []
+              },
+              {
+                  "name": "AMAZON.HelpIntent",
+                  "samples": []
+              },
+              {
+                  "name": "AMAZON.StopIntent",
+                  "samples": []
+              },
+              {
+                  "name": "HelloWorldIntent",
+                  "slots": [],
+                  "samples": [
+                      "hello",
+                      "how are you",
+                      "say hi world",
+                      "say hi",
+                      "hi",
+                      "say hello world",
+                      "say hello"
+                  ]
+              },
+              {
+                  "name": "ForceCloseBlindsIntent",
+                  "slots": [],
+                  "samples": [
+                      "force close the bedroom blinds"
+                  ]
+              },
+              {
+                  "name": "ForceOpenBlindsIntent",
+                  "slots": [],
+                  "samples": [
+                      "force open the bedroom blinds"
+                  ]
+              },
+              {
+                  "name": "OpenBlindsIntent",
+                  "slots": [],
+                  "samples": [
+                      "open",
+                      "open blinds",
+                      "open the blinds",
+                      "open bedroom blinds",
+                      "open the bedroom blinds"
+                  ]
+              },
+              {
+                  "name": "CloseBlindsIntent",
+                  "slots": [],
+                  "samples": [
+                      "close",
+                      "close blinds",
+                      "close the blinds",
+                      "close bedroom blinds",
+                      "close the bedroom blinds"
+                  ]
+              },
+              {
+                  "name": "AMAZON.NavigateHomeIntent",
+                  "samples": []
+              },
+              {
+                  "name": "AMAZON.FallbackIntent",
+                  "samples": []
+              }
+          ],
+          "types": []
+      }
+  }
+}
