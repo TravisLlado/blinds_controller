@@ -72,9 +72,9 @@ def close():
     else:
         print("Blinds are already closed")
 
-commands = [
-    ("\"open\"",        open),
-    ("\"close\"",       close),
-    ("\"force_open\"",  force_open),
-    ("\"force_close\"", force_close)
-]
+commands = {
+    "\"open\"":        open,
+    "\"close\"":       close,
+    "\"force_open\"":  force_open,
+    "\"force_close\"": force_close
+}

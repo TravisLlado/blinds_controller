@@ -31,10 +31,9 @@ def mqtt_callback(topic, msg):
     topic_str = topic.decode()
     msg_str = msg.decode()
     print(f"RX: {topic_str}\t{msg_str}")
-    for command in device.commands:
-        if msg_str == command[0]:
-            led.on()
-            command[1]()
+    if msg_str in device.commands:
+        led.on()
+        device.commands[msg_str]()
 
 def mqtt_setup():
     mqtt_client = robust.MQTTClient(
