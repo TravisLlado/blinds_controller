@@ -10,36 +10,35 @@ def read_pem(file):
         return ubinascii.a2b_base64(base64_text)
         
 def led_pulse(n):
-    half_pulse = 0.1
+    period = 0.2
     for i in range(0,n):
         led.on()
-        time.sleep(half_pulse)
+        time.sleep(period / 2.0)
         led.off()
-        time.sleep(half_pulse)
+        time.sleep(period / 2.0)
     time.sleep(0.5)
 
-def internet_connect():
+def internet_connect(net):
     print("Connecting to WiFi ...")
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    wlan.connect(keys.WIFI_SSID, keys.WIFI_PASSWORD)
-    while not wlan.isconnected():
+    net.active(True)
+    net.connect(keys.WIFI_SSID, keys.WIFI_PASSWORD)
+    while not net.isconnected():
         led_pulse(2)
     print("Connected to WiFi\n")
 
 def mqtt_callback(topic, msg):
     topic_str = topic.decode()
-    msg_str = msg.decode()
+    msg_str = msg.decode().strip('"')
     print(f"RX: {topic_str}\t{msg_str}")
-    if msg_str in device.commands:
+    if hasattr(device, msg_str):
         led.on()
-        device.commands[msg_str]()
+        getattr(device, msg_str)()
 
 def mqtt_setup():
     mqtt_client = robust.MQTTClient(
         client_id = ubinascii.hexlify(machine.unique_id()),
         server = keys.MQTT_BROKER,
-        keepalive = 30,
+        keepalive = 60,
         ssl = True,
         ssl_params = {
             "key": read_pem(keys.MQTT_CLIENT_KEY),
@@ -71,12 +70,14 @@ def mqtt_disconnect(client):
     client.disconnect()
     print("Disconnected from MQTT Broker\n")
 
+wlan = network.WLAN(network.STA_IF)
 while True:
-    internet_connect()
+    internet_connect(wlan)
     ntptime.settime()
     mqtt_client = mqtt_setup()
-    try:
-        mqtt_connect(mqtt_client)
-        mqtt_listen(mqtt_client)
-    except:
-        mqtt_disconnect(mqtt_client)
+    mqtt_connect(mqtt_client)
+    while wlan.isconnected():
+        for i in range(0, 30):
+            mqtt_client.check_msg()
+            led_pulse(1)
+        mqtt_client.publish(keys.MQTT_TOPIC, "poke")

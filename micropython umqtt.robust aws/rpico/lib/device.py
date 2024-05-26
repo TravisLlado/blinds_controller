@@ -1,5 +1,5 @@
 from machine import Pin
-from time import sleep_us
+import time
 
 ENABLE_MOTION = True
 
@@ -37,20 +37,12 @@ def move():
             pin_enable[i].value(VALUE_ENABLE)
             for x in range(PULSES_PER_MOTION):
                 pin_step.high()
-                sleep_us(PULSE_HIGH_TIME)
+                time.sleep_us(PULSE_HIGH_TIME)
                 pin_step.low()
-                sleep_us(PULSE_LOW_TIME)
+                time.sleep_us(PULSE_LOW_TIME)
             pin_enable[i].value(VALUE_DISABLE)
 
-def force_open():
-    global blinds_are_open
-    print("Opening the blinds ...")
-    pin_direction.value(VALUE_OPEN)
-    move()
-    blinds_are_open = True
-    print("Blinds are open")
-
-def force_close():
+def ForceCloseBlindsIntent():
     global blinds_are_open
     print("Closing the blinds ...")
     pin_direction.value(VALUE_CLOSE)
@@ -58,23 +50,28 @@ def force_close():
     blinds_are_open = False
     print("Blinds are closed")
 
-def open():
+def ForceOpenBlindsIntent():
     global blinds_are_open
-    if not blinds_are_open:
-        force_open()
-    else:
-        print("Blinds are already open")
+    print("Opening the blinds ...")
+    pin_direction.value(VALUE_OPEN)
+    move()
+    blinds_are_open = True
+    print("Blinds are open")
 
-def close():
+def CloseBlindsIntent():
     global blinds_are_open
     if blinds_are_open:
-        force_close()
+        ForceCloseBlindsIntent()
     else:
         print("Blinds are already closed")
 
-commands = {
-    "\"open\"":        open,
-    "\"close\"":       close,
-    "\"force_open\"":  force_open,
-    "\"force_close\"": force_close
-}
+def OpenBlindsIntent():
+    global blinds_are_open
+    if not blinds_are_open:
+        ForceOpenBlindsIntent()
+    else:
+        print("Blinds are already open")
+
+def TestBlindsIntent():
+    print("Test received")
+    time.sleep(3)
