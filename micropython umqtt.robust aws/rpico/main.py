@@ -1,4 +1,4 @@
-import device, lib.keys as keys, machine, network, ntptime, lib.robust as robust, ssl, time, ubinascii
+import device, lib.keys as keys, machine, network, ntptime, lib.simple as simple, ssl, time, ubinascii
 
 led = machine.Pin("LED", machine.Pin.OUT)
 
@@ -35,10 +35,9 @@ def mqtt_callback(topic, msg):
         getattr(device, msg_str)()
 
 def mqtt_setup():
-    mqtt_client = robust.MQTTClient(
+    mqtt_client = simple.MQTTClient(
         client_id = ubinascii.hexlify(machine.unique_id()),
         server = keys.MQTT_BROKER,
-        keepalive = 60,
         ssl = True,
         ssl_params = {
             "key": read_pem(keys.MQTT_CLIENT_KEY),
@@ -77,7 +76,7 @@ while True:
     mqtt_client = mqtt_setup()
     mqtt_connect(mqtt_client)
     while wlan.isconnected():
-        for i in range(0, 30):
+        for i in range(0, 60):
             mqtt_client.check_msg()
             led_pulse(1)
         mqtt_client.publish(keys.MQTT_TOPIC, "poke")
