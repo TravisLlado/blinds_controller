@@ -79,4 +79,4 @@ while True:
         for i in range(0, 60):
             mqtt_client.check_msg()
             led_pulse(1)
-        mqtt_client.publish(keys.MQTT_TOPIC, "poke")
+        mqtt_client.publish(keys.MQTT_TOPIC, "poke", qos = 1)

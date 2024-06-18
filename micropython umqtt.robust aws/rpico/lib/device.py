@@ -4,21 +4,23 @@ import time
 ENABLE_MOTION = True
 
 PIN_DIRECTION = 16
-PIN_STEP = 17
-PIN_ENABLE_1 = 18
-PIN_ENABLE_2 = 19
-PIN_ENABLE_3 = 20
+PIN_STEP =      17
+PIN_ENABLE_1 =  18
+PIN_ENABLE_2 =  19
+PIN_ENABLE_3 =  20
 
-PULSES_PER_TURN = 1600
-TURNS_PER_MOTION = 5.5
+PULSES_PER_TURN =   1600
+TURNS_PER_MOTION =  5.5
 PULSES_PER_MOTION = PULSES_PER_TURN * TURNS_PER_MOTION
 
-PULSE_HIGH_TIME = 20	# us
-PULSE_LOW_TIME = 200	# us
+PULSE_HIGH_TIME =   20	    # us
+PULSE_LOW_TIME =    200	    # us
+PULSE_LOW_START =   5000    # us
+PULSE_LOW_STEP =    100     # us
 
-VALUE_OPEN = 0
-VALUE_CLOSE = 1
-VALUE_ENABLE = 0
+VALUE_OPEN =    0
+VALUE_CLOSE =   1
+VALUE_ENABLE =  0
 VALUE_DISABLE = 1
 
 blinds_are_open = False
@@ -33,14 +35,15 @@ pin_enable = [
     
 def move():
     if ENABLE_MOTION:
-        for i in range(0,3):
-            pin_enable[i].value(VALUE_ENABLE)
-            for x in range(PULSES_PER_MOTION):
-                pin_step.high()
-                time.sleep_us(PULSE_HIGH_TIME)
-                pin_step.low()
-                time.sleep_us(PULSE_LOW_TIME)
-            pin_enable[i].value(VALUE_DISABLE)
+        low_time = PULSE_LOW_START
+        [pin.value(VALUE_ENABLE) for pin in pin_enable]
+        for x in range(PULSES_PER_MOTION):
+            pin_step.high()
+            time.sleep_us(PULSE_HIGH_TIME)
+            pin_step.low()
+            time.sleep_us(low_time)
+            low_time = (low_time - PULSE_LOW_STEP) if ((low_time - PULSE_LOW_STEP) >= PULSE_LOW_TIME) else (PULSE_LOW_TIME)
+        [pin.value(VALUE_DISABLE) for pin in pin_enable]
 
 def ForceCloseBlindsIntent():
     global blinds_are_open
