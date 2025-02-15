@@ -1,5 +1,9 @@
 import device, lib.keys as keys, machine, network, ntptime, lib.simple as simple, ssl, time, ubinascii
 
+UTC_OFFSET = -7 * 3600
+
+RESET_TIMES = [(5 * 3600), (16 * 3600)]
+
 led = machine.Pin("LED", machine.Pin.OUT)
 
 def read_pem(file):
@@ -58,17 +62,26 @@ def mqtt_connect(client):
     client.subscribe(keys.MQTT_TOPIC)
     print("Connected to MQTT Broker\n")
 
-def mqtt_listen(client):
-    print(f"Listening to {keys.MQTT_TOPIC} ...")
-    while True:
-        client.check_msg()
-        led_pulse(1)
+# def mqtt_listen(client):
+#     print(f"Listening to {keys.MQTT_TOPIC} ...")
+#     while True:
+#         client.check_msg()
+#         led_pulse(1)
 
 def mqtt_disconnect(client):
     print("Disconnecting from MQTT Broker ...")
     client.disconnect()
     print("Disconnected from MQTT Broker\n")
 
+def time_in_seconds():
+    _, _, _, hours, minutes, seconds, _, _ = time.localtime(time.time() + UTC_OFFSET)
+    return (hours * 3600) + (minutes * 60) + seconds
+
+def current_minute():
+    _, _, _, _, minutes, _, _, _ = time.localtime(time.time() + UTC_OFFSET)
+    return minutes
+
+previous_minute = 0
 wlan = network.WLAN(network.STA_IF)
 while True:
     internet_connect(wlan)
@@ -76,7 +89,13 @@ while True:
     mqtt_client = mqtt_setup()
     mqtt_connect(mqtt_client)
     while wlan.isconnected():
-        for i in range(0, 60):
-            mqtt_client.check_msg()
-            led_pulse(1)
-        mqtt_client.publish(keys.MQTT_TOPIC, "poke", qos = 1)
+        if previous_minute != current_minute():
+            mqtt_client.publish(keys.MQTT_TOPIC, "poke", qos = 1)
+        previous_minute = current_minute()
+        
+        if time_in_seconds() in RESET_TIMES:
+            mqtt_disconnect(mqtt_client)
+            mqtt_connect(mqtt_client)
+
+        mqtt_client.check_msg()
+        led_pulse(1)
