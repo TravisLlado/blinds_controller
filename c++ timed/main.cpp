@@ -114,7 +114,7 @@ int main() {
     rtc_get_datetime(&now);
 
     const bool after_sunrise{convert_time_to_uint(now) > (convert_time_to_uint(sunrise(now)) + SUNRISE_MARGIN)};
-    const bool before_sunset{convert_time_to_uint(now) < (convert_time_to_uint(sunset(now)) + SUNSET_MARGIN)};
+    const bool before_sunset{convert_time_to_uint(now) < (convert_time_to_uint(sunset(now)) - SUNSET_MARGIN)};
     const bool blinds_should_be_open{after_sunrise && before_sunset};
 
     if (blinds_should_be_open) {
