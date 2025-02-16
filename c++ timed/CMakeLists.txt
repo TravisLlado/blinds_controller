@@ -7,6 +7,8 @@ project(pico_examples C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+
+
 if (PICO_SDK_VERSION_STRING VERSION_LESS "1.3.0")
     message(FATAL_ERROR "Raspberry Pi Pico SDK version 1.3.0 (or later) required. Your version is ${PICO_SDK_VERSION_STRING}")
 endif()
@@ -16,11 +18,12 @@ set(PICO_EXAMPLES_PATH ${PROJECT_SOURCE_DIR})
 # Initialize the SDK
 pico_sdk_init()
 
-# include(example_auto_set_url.cmake)
+# main controls three sets of blinds
+add_executable(main main.cpp blinds.cpp)
 
-add_executable(main main.cpp ws2812.cpp)
-
-pico_generate_pio_header(main ${CMAKE_CURRENT_LIST_DIR}/WS2812.pio)
+# Enable USB serial for optional debug
+pico_enable_stdio_uart(main 0)
+pico_enable_stdio_usb(main 1)
 
 # pull in common dependencies
 target_link_libraries(main pico_stdlib hardware_rtc hardware_pio)
