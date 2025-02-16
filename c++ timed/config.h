@@ -1,6 +1,5 @@
-#define STARTUP_YEAR  2025
 #define STARTUP_MON   2
-#define STARTUP_DAY   15
+#define STARTUP_DAY   16
 #define STARTUP_HOUR  12
 #define STARTUP_MIN   00
 
