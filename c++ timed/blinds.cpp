@@ -1,13 +1,12 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Living Room Blinds Control Code, now without Alexa!
 // written by Travis Llado
-// last edited 2025-02-15
+// last edited 2025-02-20
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "blinds.h"
-#include "pico/cyw43_arch.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -24,6 +23,7 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 
+void turn(const bool direction);
 void pin_init(const uint32_t pin, const bool state);
 void stepper_direction(const bool direction);
 void stepper_disable(const uint32_t pin);
@@ -32,43 +32,29 @@ void stepper_step(const uint32_t low_time);
 
 ////////////////////////////////////////////////////////////////////////////////
 
-blinds_motors::blinds_motors(const bool blinds_are_open) {
+void blinds_init(void) {
   pin_init(PIN_STEPPER_ENABLE_1, true);
   pin_init(PIN_STEPPER_ENABLE_2, true);
   pin_init(PIN_STEPPER_ENABLE_3, true);
   pin_init(PIN_STEPPER_DIRECTION, false);
   pin_init(PIN_STEPPER_STEP, false);
-
-  if (blinds_are_open) {
-    position_ = OPEN;
-  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void blinds_motors::close(void) {
-  cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, true);
-  if (position_ == OPEN) {
+void blinds_close(void) {
     turn(DIRECTION_CLOSE);
-    position_ = CLOSED;
-  }
-  cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void blinds_motors::open(void) {
-  cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, true);
-  if (position_ == CLOSED) {
+void blinds_open(void) {
     turn(DIRECTION_OPEN);
-    position_ = OPEN;
-  }
-  cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void blinds_motors::turn(const bool direction) {
+void turn(const bool direction) {
   stepper_direction(direction);
   stepper_enable(PIN_STEPPER_ENABLE_1);
   stepper_enable(PIN_STEPPER_ENABLE_2);

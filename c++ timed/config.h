@@ -1,21 +1,21 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Living Room Blinds Control Code, now without Alexa!
 // written by Travis Llado
-// last edited 2025-02-16
+// last edited 2025-02-20
 ////////////////////////////////////////////////////////////////////////////////
 
 #define STARTUP_MON   2
-#define STARTUP_DAY   17
-#define STARTUP_HOUR  19
-#define STARTUP_MIN   37
+#define STARTUP_DAY   20
+#define STARTUP_HOUR  10
+#define STARTUP_MIN   44
 
-#define BLINDS_ARE_OPEN true
+#define BLINDS_ARE_OPEN false
 
 #define SUNRISE_MARGIN (30 * 60)  // sec
 #define SUNSET_MARGIN  (30 * 60)  // sec
 
-#define DEBUG_LED     0
-#define DEBUG_SERIAL  1
+#define DEBUG_LED     1
+#define DEBUG_SERIAL  0
 
 ////////////////////////////////////////////////////////////////////////////////
 

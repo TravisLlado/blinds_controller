@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Living Room Blinds Control Code, now without Alexa!
 // written by Travis Llado
-// last edited 2025-02-17
+// last edited 2025-02-20
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <cmath>
@@ -15,10 +15,6 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 
-#define LED_PIN CYW43_WL_GPIO_LED_PIN
-#define LED_OFF false
-#define LED_ON  true
-
 #define SUMMER_SOLSTICE_SUNRISE_TIME  static_cast<float>(SUMMER_SOLSTICE_SUNRISE_HOUR * 3600U + SUMMER_SOLSTICE_SUNRISE_MIN * 60U)
 #define SUMMER_SOLSTICE_SUNSET_TIME   static_cast<float>(SUMMER_SOLSTICE_SUNSET_HOUR  * 3600U + SUMMER_SOLSTICE_SUNSET_MIN  * 60U)
 #define WINTER_SOLSTICE_SUNRISE_TIME  static_cast<float>(WINTER_SOLSTICE_SUNRISE_HOUR * 3600U + WINTER_SOLSTICE_SUNRISE_MIN * 60U)
@@ -26,10 +22,6 @@
 
 #define SUNRISE_VARIATION (WINTER_SOLSTICE_SUNRISE_TIME - SUMMER_SOLSTICE_SUNRISE_TIME)
 #define SUNSET_VARIATION  (SUMMER_SOLSTICE_SUNSET_TIME - WINTER_SOLSTICE_SUNSET_TIME)
-
-////////////////////////////////////////////////////////////////////////////////
-
-blinds_motors blinds(BLINDS_ARE_OPEN);
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -121,18 +113,9 @@ int main() {
     stdio_init_all();
   #endif
 
-  // #if DEBUG_LED
+  #if DEBUG_LED
     cyw43_arch_init();
-  // #endif
-
-  // Sometimes the motors run with USB power ... give time to unplug after flashing
-  for (int i = 5; i > 0; i--) {
-    debug_led(true);
-    debug_printf("%u\n", i);
-    sleep_ms(100U);
-    debug_led(false);
-    sleep_ms(900U);
-  }
+  #endif
 
   datetime_t now{
     .year = 2000,
@@ -143,11 +126,22 @@ int main() {
     .min = STARTUP_MIN,
     .sec = 0
   };
-  datetime_t previous{now};
 
   rtc_init();
   rtc_set_datetime(&now);
 
+  // Sometimes the motors run with USB power ... give time to unplug after flashing
+  for (int i = 5; i > 0; i--) {
+    debug_led(true);
+    debug_printf("%u\n", i);
+    sleep_ms(100U);
+    debug_led(false);
+    sleep_ms(900U);
+  }
+
+  blinds_init();
+
+  datetime_t previous{now};
   datetime_t todays_sunrise{calc_sunrise(now)};
   datetime_t todays_sunset{calc_sunset(now)};
 
@@ -159,16 +153,16 @@ int main() {
 
     if (blinds_should_be_open && !BLINDS_ARE_OPEN) {
       debug_led(true);
-      debug_printf("opening blinds ...");
-      blinds.open();
+      debug_printf("opening blinds ...\n");
+      blinds_open();
       debug_led(false);
-      debug_printf(" blinds open\n");
+      debug_printf("    blinds open\n");
     } else if (!blinds_should_be_open && BLINDS_ARE_OPEN) {
       debug_led(true);
-      debug_printf("closing blinds ...");
-      blinds.close();
+      debug_printf("closing blinds ...\n");
+      blinds_close();
       debug_led(false);
-      debug_printf(" blinds closed\n");
+      debug_printf("    blinds closed\n");
     }
   }
 
@@ -186,16 +180,16 @@ int main() {
       }
       if ((now.hour == todays_sunrise.hour) && (now.min == todays_sunrise.min) && (now.sec == todays_sunrise.sec)) {
         debug_led(true);
-        debug_printf("opening blinds ...");
-        blinds.open();
+        debug_printf("opening blinds ...\n");
+        blinds_open();
         debug_led(false);
-        debug_printf(" blinds open\n");
+        debug_printf("    blinds open\n");
       } else if ((now.hour == todays_sunset.hour) && (now.min == todays_sunset.min) && (now.sec == todays_sunset.sec)) {
         debug_led(true);
-        debug_printf("closing blinds ...");
-        blinds.close();
+        debug_printf("closing blinds ...\n");
+        blinds_close();
         debug_led(false);
-        debug_printf(" blinds closed\n");
+        debug_printf("    blinds closed\n");
       }
 
       previous = now;
