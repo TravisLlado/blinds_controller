@@ -4,49 +4,38 @@
 
 #include <Arduino.h>
 #include "blinds.h"
-// #include "sun.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"
 
 // Constants ///////////////////////////////////////////////////////////////////
 
-// Blinds pin assignments
-constexpr gpio_num_t DIR_PIN = GPIO_NUM_6;
-constexpr gpio_num_t SPD_PIN = GPIO_NUM_2;
-constexpr gpio_num_t ENC_PIN = GPIO_NUM_3;
-constexpr gpio_num_t LIM_PIN = GPIO_NUM_4;
+constexpr gpio_num_t BTN_PIN{GPIO_NUM_5};
+constexpr uint32_t TICK_PERIOD{10U}; // ms
+constexpr uint32_t BUTTON_PRESS_LENGTH{200000U}; // us
 
-constexpr gpio_num_t BTN_PIN = GPIO_NUM_5;
-
-constexpr uint32_t TICK_PERIOD_MS = 10U;
+constexpr uint32_t OPEN_TICKS{4000U};
+constexpr uint32_t TIMEOUT{60000U}; // ms
+constexpr float DUTY_CYCLE{0.4F};
 
 // Globals /////////////////////////////////////////////////////////////////////
 
 volatile bool global_button_triggered = false;
 
-// static bool global_reposition_done_sunrise = false;
-// static bool global_reposition_done_sunset = false;
-
-constexpr uint32_t OPEN_TICKS = 500U;
-constexpr uint32_t TIMEOUT_MS = 10000U;
-
-constexpr float DUTY_CYCLE = 0.4F;
-
-Blinds global_blinds(DIR_PIN, SPD_PIN, ENC_PIN, LIM_PIN, OPEN_TICKS, TIMEOUT_MS,
-    DUTY_CYCLE);
+//                     Direction   Speed       Encoder      Limit        Open Length Timeout Duty Cycle   PWM Channel
+Blinds global_blinds_1(GPIO_NUM_6, GPIO_NUM_2, GPIO_NUM_3,  GPIO_NUM_4,  OPEN_TICKS, TIMEOUT, DUTY_CYCLE, LEDC_CHANNEL_0);
+Blinds global_blinds_2(GPIO_NUM_7, GPIO_NUM_1, GPIO_NUM_10, GPIO_NUM_9,  OPEN_TICKS, TIMEOUT, DUTY_CYCLE, LEDC_CHANNEL_1);
+Blinds global_blinds_3(GPIO_NUM_8, GPIO_NUM_0, GPIO_NUM_21, GPIO_NUM_20, OPEN_TICKS, TIMEOUT, DUTY_CYCLE, LEDC_CHANNEL_2);
 
 // Functions ///////////////////////////////////////////////////////////////////
 
 extern "C" void IRAM_ATTR onButtonPress(void* arg) {
   global_button_triggered = true;
-  Serial.println("Button has been pressed!");
 }
 
 // main ////////////////////////////////////////////////////////////////////////
 
 extern "C" void app_main() {
   initArduino();  // Required for sun.cpp Arduino networking
-  Serial.begin(115200);
   delay(100);
 
   // Configure button input with pull-up
@@ -61,64 +50,26 @@ extern "C" void app_main() {
   gpio_install_isr_service(0);
   gpio_isr_handler_add(BTN_PIN, onButtonPress, nullptr);
 
-  // setupNetworking();
-
 // Loop ////////////////////////////////////////////////////////////////////////
-  // uint64_t last_debug_time_us = 0;
   uint64_t button_press_time_us = 0;
 
   while (true) {
-    // const unsigned long now = getCurrentEpoch();
-    // const int seconds_since_midnight = now % (24 * 3600);
-
-// Scheduled Events ////////////////////////////////////////////////////////////
-
-    // updateSunData(seconds_since_midnight);
-
-    // if (shouldResetDailyFlags(seconds_since_midnight)) {
-    //   global_reposition_done_sunrise = false;
-    //   global_reposition_done_sunset = false;
-    // }
-
-    // if (!global_reposition_done_sunrise && isSunriseTriggerTime(seconds_since_midnight)) {
-    //   global_blinds.open();
-    //   global_reposition_done_sunrise = true;
-    // }
-
-    // if (!global_reposition_done_sunset && isSunsetTriggerTime(seconds_since_midnight)) {
-    //   global_blinds.close();
-    //   global_reposition_done_sunset = true;
-    // }
-
-    // if ((esp_timer_get_time() - last_debug_time_us) >= 1000000U) {
-    //   auto format_time = [](unsigned long seconds) {
-    //     int h = (seconds / 3600) % 24;
-    //     int m = (seconds / 60) % 60;
-    //     int s = seconds % 60;
-    //     char buf[9];
-    //     snprintf(buf, sizeof(buf), "%02d:%02d:%02d", h, m, s);
-    //     return String(buf);
-    //   };
-
-    //   Serial.print("time: ");
-    //   Serial.print(format_time(seconds_since_midnight));
-    //   Serial.print(" position: ");
-    //   Serial.print(global_blinds.blindsAreOpen() ? "OPEN" : "CLOSED");
-    //   Serial.print(" sunrise: ");
-    //   Serial.print(format_time(getSunriseTime()));
-    //   Serial.print(" sunset: ");
-    //   Serial.println(format_time(getSunsetTime()));
-
-    //   last_debug_time_us = esp_timer_get_time();
-    // }
-
-// Button handling /////////////////////////////////////////////////////////////
-
     if (global_button_triggered) {
       if (button_press_time_us == 0) {
         button_press_time_us = esp_timer_get_time();
-      } else if ((esp_timer_get_time() - button_press_time_us) >= 200000U) {
-        global_blinds.toggle();
+      } else if ((esp_timer_get_time() - button_press_time_us) >= BUTTON_PRESS_LENGTH) {
+        if (global_blinds_1.blindsAreClosed() && 
+            global_blinds_2.blindsAreClosed() && 
+            global_blinds_3.blindsAreClosed()) {
+          global_blinds_1.open();
+          global_blinds_2.open();
+          global_blinds_3.open();
+        } else {
+          global_blinds_1.close();
+          global_blinds_2.close();
+          global_blinds_3.close();
+        }
+
         global_button_triggered = false;
         button_press_time_us = 0;
       }
@@ -126,7 +77,7 @@ extern "C" void app_main() {
       button_press_time_us = 0;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(TICK_PERIOD_MS));
+    vTaskDelay(pdMS_TO_TICKS(TICK_PERIOD));
   }
 }
 

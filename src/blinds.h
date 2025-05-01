@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <Arduino.h>
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_timer.h"
@@ -11,28 +12,28 @@
 class Blinds {
 public:
   enum Direction {
-    CLOSE = 1,
-    OPEN  = 0
+    CLOSE = HIGH,
+    OPEN  = LOW
   };
 
   enum LimitSwitchState {
-    PRESSED  = 0,
-    RELEASED = 1
+    PRESSED  = LOW,
+    RELEASED = HIGH
   };
 
   enum MotorState {
-    OFF = 0,
-    ON  = 1
+    OFF = LOW,
+    ON  = HIGH
   };
 
   Blinds(gpio_num_t dirPin, gpio_num_t spdPin, gpio_num_t encPin,
       gpio_num_t limPin, uint32_t openTicks, uint32_t timeoutMs,
-      float dutyCycle);
+      float dutyCycle, ledc_channel_t pwmChannel);
 
   void open();
   void close();
   void toggle();
-  bool blindsAreOpen() const;
+  bool blindsAreClosed() const;
 
 private:
   gpio_num_t dir_pin;
@@ -42,6 +43,7 @@ private:
   uint32_t open_ticks;
   uint32_t timeout_us;
   uint32_t duty_pwm;
+  ledc_channel_t ledc_channel;
 
   volatile uint32_t tick_count;
 
