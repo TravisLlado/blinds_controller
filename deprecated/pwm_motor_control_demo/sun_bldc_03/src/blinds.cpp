@@ -1,0 +1,117 @@
+// blinds.cpp //////////////////////////////////////////////////////////////////
+
+#include "blinds.h"
+
+// Constants ///////////////////////////////////////////////////////////////////
+
+constexpr ledc_channel_t LEDC_CHANNEL = LEDC_CHANNEL_0;
+constexpr ledc_timer_t   LEDC_TIMER   = LEDC_TIMER_0;
+constexpr uint32_t       PWM_FREQ_HZ  = 20000;
+constexpr uint8_t        PWM_RES_BITS = 8;
+
+// Public //////////////////////////////////////////////////////////////////////
+
+Blinds::Blinds(gpio_num_t dirPin, gpio_num_t spdPin, gpio_num_t encPin,
+    gpio_num_t limPin, uint32_t openTicks, uint32_t timeoutMs, float dutyCycle)
+    : dir_pin(dirPin), spd_pin(spdPin), enc_pin(encPin), lim_pin(limPin),
+    open_ticks(openTicks), timeout_us(timeoutMs * 1000),
+    duty_pwm(static_cast<uint32_t>(dutyCycle * ((1 << PWM_RES_BITS) - 1))),
+    tick_count(0) {
+  // Configure GPIOs
+  gpio_config_t io_conf = {};
+  io_conf.intr_type = GPIO_INTR_DISABLE;
+  io_conf.mode = GPIO_MODE_OUTPUT;
+  io_conf.pin_bit_mask = (1ULL << dir_pin) | (1ULL << spd_pin);
+  gpio_config(&io_conf);
+
+  io_conf.intr_type = GPIO_INTR_POSEDGE;
+  io_conf.mode = GPIO_MODE_INPUT;
+  io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+  io_conf.pin_bit_mask = (1ULL << enc_pin);
+  gpio_config(&io_conf);
+
+  io_conf.intr_type = GPIO_INTR_DISABLE;
+  io_conf.pin_bit_mask = (1ULL << lim_pin);
+  gpio_config(&io_conf);
+
+  // PWM Setup
+  ledc_timer_config_t ledc_timer = {
+    .speed_mode       = LEDC_LOW_SPEED_MODE,
+    .duty_resolution  = static_cast<ledc_timer_bit_t>(PWM_RES_BITS),
+    .timer_num        = LEDC_TIMER,
+    .freq_hz          = PWM_FREQ_HZ,
+    .clk_cfg          = LEDC_AUTO_CLK
+  };
+  ledc_timer_config(&ledc_timer);
+
+  ledc_channel_config_t ledc_channel = {
+    .gpio_num       = spd_pin,
+    .speed_mode     = LEDC_LOW_SPEED_MODE,
+    .channel        = LEDC_CHANNEL,
+    .intr_type      = LEDC_INTR_DISABLE,
+    .timer_sel      = LEDC_TIMER,
+    .duty           = 0,
+    .hpoint         = 0
+  };
+  ledc_channel_config(&ledc_channel);
+
+  // Interrupt setup
+  gpio_set_intr_type(enc_pin, GPIO_INTR_POSEDGE);
+  gpio_install_isr_service(0);  // pass 0 for default ISR service
+  gpio_isr_handler_add(enc_pin, isrHandler, this);
+}
+
+void Blinds::open() {
+  if (!blindsAreOpen()) {
+    tick_count = 0;
+    runMotor(Direction::OPEN);
+    int64_t start = esp_timer_get_time();
+    while ((tick_count < open_ticks) &&
+        ((esp_timer_get_time() - start) < timeout_us)) {
+      // spin
+    }
+    stopMotor();
+  }
+}
+  
+void Blinds::close() {
+  if (blindsAreOpen()) {
+    runMotor(Direction::CLOSE);
+    int64_t start = esp_timer_get_time();
+    while (blindsAreOpen() && ((esp_timer_get_time() - start) < timeout_us)) {
+      // spin
+    }
+    stopMotor();
+  }
+}
+  
+void Blinds::toggle() {
+  if (blindsAreOpen()) {
+    close();
+  } else {
+    open();
+  }
+}
+
+bool Blinds::blindsAreOpen() const {
+  return gpio_get_level(lim_pin) == LimitSwitchState::RELEASED;
+}
+
+// Private /////////////////////////////////////////////////////////////////////
+
+void IRAM_ATTR Blinds::isrHandler(void* arg) {
+  static_cast<Blinds*>(arg)->tick_count++;
+}
+  
+void Blinds::runMotor(const Direction dir) {
+  gpio_set_level(dir_pin, dir);
+  ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, duty_pwm);
+  ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
+}
+  
+void Blinds::stopMotor() {
+  ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, 0);
+  ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
+}
+
+// End of file /////////////////////////////////////////////////////////////////
