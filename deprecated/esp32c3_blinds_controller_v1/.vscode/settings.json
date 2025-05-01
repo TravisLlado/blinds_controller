@@ -1,9 +1,0 @@
-{
-  "files.associations": {
-    "gpio.h": "c",
-    "esp_err.h": "c",
-    "ledc.h": "c",
-    "esp_rom_sys.h": "c",
-    "esp_log.h": "c"
-  }
-}
