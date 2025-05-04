@@ -13,13 +13,15 @@ constexpr gpio_num_t BTN_PIN{GPIO_NUM_5};
 constexpr uint32_t TICK_PERIOD{10U}; // ms
 constexpr uint32_t BUTTON_PRESS_LENGTH{200000U}; // us
 
-constexpr uint32_t OPEN_TICKS{4000U};
+constexpr uint32_t OPEN_TICKS{4350U};
 constexpr uint32_t TIMEOUT{60000U}; // ms
-constexpr float DUTY_CYCLE{0.4F};
+constexpr float DUTY_CYCLE{0.45F};
 
 // Globals /////////////////////////////////////////////////////////////////////
 
-volatile bool global_button_triggered = false;
+volatile bool global_button_triggered{false};
+
+bool global_open{true};
 
 //                     Direction   Speed       Encoder      Limit        Open Length Timeout Duty Cycle   PWM Channel
 Blinds global_blinds_1(GPIO_NUM_6, GPIO_NUM_2, GPIO_NUM_3,  GPIO_NUM_4,  OPEN_TICKS, TIMEOUT, DUTY_CYCLE, LEDC_CHANNEL_0);
@@ -58,16 +60,19 @@ extern "C" void app_main() {
       if (button_press_time_us == 0) {
         button_press_time_us = esp_timer_get_time();
       } else if ((esp_timer_get_time() - button_press_time_us) >= BUTTON_PRESS_LENGTH) {
-        if (global_blinds_1.blindsAreClosed() && 
-            global_blinds_2.blindsAreClosed() && 
-            global_blinds_3.blindsAreClosed()) {
+        // if (global_blinds_1.blindsAreClosed() && 
+        //     global_blinds_2.blindsAreClosed() &&
+        //     global_blinds_3.blindsAreClosed()) {
+        if (global_open == false) {
           global_blinds_1.open();
           global_blinds_2.open();
           global_blinds_3.open();
+          global_open = true;
         } else {
           global_blinds_1.close();
           global_blinds_2.close();
           global_blinds_3.close();
+          global_open = false;
         }
 
         global_button_triggered = false;

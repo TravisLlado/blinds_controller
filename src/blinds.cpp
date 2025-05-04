@@ -74,7 +74,14 @@ gpio_isr_handler_add(enc_pin, isrHandler, this);
 }
 
 void Blinds::open() {
-  if (blindsAreClosed()) {
+  // Close blinds again to reset position because of problems on channels 1 and 2
+  {
+    runMotor(Direction::CLOSE);
+    while (!blindsAreClosed()) { /* wait */ }
+    stopMotor();
+  }
+
+  // if (blindsAreClosed()) {
     tick_count = 0;
     const int64_t start = esp_timer_get_time();
     runMotor(Direction::OPEN);
@@ -83,11 +90,11 @@ void Blinds::open() {
       // wait
     }
     stopMotor();
-  }
+  // }
 }
 
 void Blinds::close() {
-  if (!blindsAreClosed()) {
+  // if (!blindsAreClosed()) {
     const int64_t start = esp_timer_get_time();
     runMotor(Direction::CLOSE);
 
@@ -95,7 +102,15 @@ void Blinds::close() {
       // wait
     }
     stopMotor();
-  }
+
+    // Reopen a bit to prevent problems on channels 1 and 2
+    {
+      tick_count = 0;
+      runMotor(Direction::OPEN);
+      while (tick_count < 200U) { /* wait */ }
+      stopMotor();
+    }
+  // }
 }
   
 void Blinds::toggle() {
