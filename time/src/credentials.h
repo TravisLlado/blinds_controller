@@ -1,6 +1,6 @@
 // credentials.h ///////////////////////////////////////////////////////////////
 
-constexpr const char* ssid     = "TheVeryBestWifi";
-constexpr const char* password = "AlabasterParakeet";
+constexpr const char* WIFI_SSID     = "TheVeryBestWifi";
+constexpr const char* WIFI_PASSWORD = "AlabasterParakeet";
 
 // End of file /////////////////////////////////////////////////////////////////

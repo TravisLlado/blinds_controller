@@ -1,12 +1,13 @@
 // TimeSync.h //////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <WiFi.h>
-#include <WiFiClient.h>
 #include <HTTPClient.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
 #include <ArduinoJson.h>
+#include <time.h>
 
 struct DaylightTimes {
   uint32_t current;  // Seconds since midnight
@@ -16,40 +17,26 @@ struct DaylightTimes {
 
 class TimeSync {
 public:
+  // Constructor with location and timezone parameters
   TimeSync(float latitude, float longitude, int timezone_offset_sec);
-
-  // Initializes Wi-Fi and NTP client, performs first update
-  void begin(const char* ssid, const char* password);
-
-  // Call this once daily in the update window (e.g. 2–5 AM)
-  bool updateForToday();
-
-  // Returns current time and today's sunrise/sunset (all in seconds since midnight)
-  DaylightTimes getCurrentTimes();
-
-  // Returns true if daily update has been completed
-  bool updateDone() const;
-
-  // Call this at midnight to reset internal flags
-  void resetDailyFlags();
-
+  
+  // Function prototypes
+  DaylightTimes fetchTimeData();
+  
 private:
-  bool ensureWiFiConnected();
-  bool updateTime();
-  bool fetchSunriseSunset();
+  bool connectToWiFi();
+  void disconnectWiFi();
+  bool fetchNTPTime(uint32_t& currentTime);
+  bool fetchSunriseSunset(uint32_t& sunrise, uint32_t& sunset);
   int parseTime(String timeStr);
-
+  
+  // Location parameters
   float _lat;
   float _lon;
   int _tz_offset;
-
+  
+  // UDP for NTP
   WiFiUDP _udp;
-  NTPClient _ntp;
-  uint32_t _lastSync;
-
-  uint32_t _sunrise;
-  uint32_t _sunset;
-  bool _updateDoneForDay;
 };
 
 // End of file /////////////////////////////////////////////////////////////////

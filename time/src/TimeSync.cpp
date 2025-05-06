@@ -1,131 +1,189 @@
 // TimeSync.cpp ////////////////////////////////////////////////////////////////
 
 #include "TimeSync.h"
+#include "credentials.h"
 
 TimeSync::TimeSync(float latitude, float longitude, int timezone_offset_sec)
-  : _lat(latitude), _lon(longitude), _tz_offset(timezone_offset_sec),
-    _ntp(_udp, "pool.ntp.org", timezone_offset_sec, 60000),
-    _lastSync(0), _sunrise(6 * 3600), _sunset(18 * 3600), _updateDoneForDay(false) {}
+  : _lat(latitude), _lon(longitude), _tz_offset(timezone_offset_sec) {
+  // Nothing else to initialize
+}
 
-void TimeSync::begin(const char* ssid, const char* password) {
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+DaylightTimes TimeSync::fetchTimeData() {
+  DaylightTimes result = {0, 0, 0}; // Initialize with zeros
+  
+  // Step 1: Connect to WiFi
+  if (!connectToWiFi()) {
+    Serial.println("Failed to connect to WiFi");
+    disconnectWiFi();
+    return result;
+  }
+  
+  // Step 2: Get current time via NTP and set system time
+  bool timeSuccess = fetchNTPTime(result.current);
+  
+  // Step 3: Get sunrise/sunset times
+  bool sunSuccess = fetchSunriseSunset(result.sunrise, result.sunset);
+  
+  // Step 4: Disconnect from WiFi
+  disconnectWiFi();
+  
+  // Return the data (will contain zeros for any values that failed to fetch)
+  return result;
+}
+
+bool TimeSync::connectToWiFi() {
+  Serial.print("Connecting to WiFi...");
+  
+  // Check if already connected
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Already connected");
+    return true;
+  }
+  
+  // Start connection - using credentials from credentials.h
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  // Wait for connection with timeout
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 20000) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nConnected to Wi-Fi");
-  _ntp.begin();
-  updateTime();
-  fetchSunriseSunset();
-
-  uint32_t current = _ntp.getEpochTime();
-  uint32_t secOfDay = current % 86400;
-  if (secOfDay < (2 * 3600)) {
-    _updateDoneForDay = false;
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConnected to WiFi");
+    return true;
+  } else {
+    Serial.println("\nFailed to connect to WiFi");
+    return false;
   }
 }
 
-bool TimeSync::updateForToday() {
-  if (_updateDoneForDay) return true;
-  Serial.println("Attempting daily time/sunrise/sunset update...");
-  bool success = updateTime() && fetchSunriseSunset();
-  _updateDoneForDay = success;
+void TimeSync::disconnectWiFi() {
+  Serial.println("Disconnecting from WiFi");
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+}
+
+bool TimeSync::fetchNTPTime(uint32_t& currentTime) {
+  Serial.println("Fetching NTP time...");
+  
+  // Configure time
+  configTime(_tz_offset, 0, "pool.ntp.org");
+  
+  // Wait for time to be set
+  Serial.println("Waiting for system time to be set...");
+  int retry = 0;
+  time_t now = 0;
+  struct tm timeinfo;
+  
+  while (!getLocalTime(&timeinfo) && retry < 10) {
+    Serial.print(".");
+    delay(500);
+    retry++;
+  }
+  
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to obtain time");
+    return false;
+  }
+  
+  // Convert to seconds since midnight
+  currentTime = (timeinfo.tm_hour * 3600) + 
+               (timeinfo.tm_min * 60) + 
+                timeinfo.tm_sec;
+  
+  char timeString[50];
+  strftime(timeString, sizeof(timeString), "%A, %B %d %Y %H:%M:%S", &timeinfo);
+  Serial.print("System time set: ");
+  Serial.println(timeString);
+  
+  return true;
+}
+
+bool TimeSync::fetchSunriseSunset(uint32_t& sunrise, uint32_t& sunset) {
+  HTTPClient http;
+  String url = "http://api.sunrise-sunset.org/json?lat=" + String(_lat, 6) +
+               "&lng=" + String(_lon, 6) + "&formatted=0";
+               
+  Serial.println("Fetching sunrise/sunset times...");
+  Serial.println(url);
+  
+  bool success = false;
+  
+  // Try multiple times
+  for (int attempt = 0; attempt < 5 && !success; attempt++) {
+    http.begin(url);
+    int httpCode = http.GET();
+    
+    if (httpCode == 200) {
+      String payload = http.getString();
+      http.end();
+      
+      // Parse JSON response
+      StaticJsonDocument<1024> doc;
+      DeserializationError error = deserializeJson(doc, payload);
+      
+      if (error) {
+        Serial.print("JSON parsing failed: ");
+        Serial.println(error.f_str());
+        delay(1000);
+        continue;
+      }
+      
+      // Extract data
+      String sunriseStr = doc["results"]["sunrise"];
+      String sunsetStr = doc["results"]["sunset"];
+      
+      // Convert to seconds since midnight with timezone adjustment
+      int sunriseSec = parseTime(sunriseStr) + _tz_offset;
+      int sunsetSec = parseTime(sunsetStr) + _tz_offset;
+      
+      // Normalize to 0-86399 range (seconds in a day)
+      if (sunriseSec < 0) sunriseSec += 86400;
+      if (sunsetSec < 0) sunsetSec += 86400;
+      if (sunriseSec >= 86400) sunriseSec -= 86400;
+      if (sunsetSec >= 86400) sunsetSec -= 86400;
+      
+      sunrise = sunriseSec;
+      sunset = sunsetSec;
+      
+      Serial.print("Sunrise: ");
+      Serial.print(sunrise / 3600);
+      Serial.print(":");
+      Serial.print((sunrise % 3600) / 60);
+      Serial.print(":");
+      Serial.println(sunrise % 60);
+      
+      Serial.print("Sunset: ");
+      Serial.print(sunset / 3600);
+      Serial.print(":");
+      Serial.print((sunset % 3600) / 60);
+      Serial.print(":");
+      Serial.println(sunset % 60);
+      
+      success = true;
+    } else {
+      Serial.print("HTTP request failed with code: ");
+      Serial.println(httpCode);
+      http.end();
+      delay(1000);
+    }
+  }
+  
+  if (!success) {
+    Serial.println("Failed to fetch sunrise/sunset after multiple attempts");
+  }
+  
   return success;
 }
 
-bool TimeSync::updateDone() const {
-  return _updateDoneForDay;
-}
-
-void TimeSync::resetDailyFlags() {
-  _updateDoneForDay = false;
-}
-
-DaylightTimes TimeSync::getCurrentTimes() {
-  ensureWiFiConnected();
-  _ntp.update();
-  uint32_t now = _ntp.getEpochTime();
-  uint32_t secMidnight = now % 86400;
-  return DaylightTimes{ secMidnight, _sunrise, _sunset };
-}
-
-bool TimeSync::ensureWiFiConnected() {
-  if (WiFi.status() == WL_CONNECTED) return true;
-  Serial.println("Wi-Fi lost. Reconnecting...");
-  WiFi.disconnect();
-  WiFi.begin();
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
-    delay(500);
-    Serial.print(".");
-  }
-  bool connected = WiFi.status() == WL_CONNECTED;
-  Serial.println(connected ? "\nReconnected to Wi-Fi." : "\nFailed to reconnect.");
-  return connected;
-}
-
-bool TimeSync::updateTime() {
-  Serial.println("Updating NTP time...");
-  for (int i = 0; i < 5; i++) {
-    if (_ntp.update()) {
-      _lastSync = _ntp.getEpochTime();
-      Serial.println("Time update successful.");
-      return true;
-    }
-    Serial.println("NTP update failed, retrying...");
-    delay(2000);
-  }
-  Serial.println("NTP update failed after multiple attempts.");
-  return false;
-}
-
-bool TimeSync::fetchSunriseSunset() {
-  HTTPClient http;
-  String url = "http://api.sunrise-sunset.org/json?lat=" + String(_lat) +
-               "&lng=" + String(_lon) + "&formatted=0";
-  for (int i = 0; i < 5; i++) {
-    Serial.println("Fetching sunrise/sunset times...");
-    http.begin(url);
-    int httpCode = http.GET();
-    if (httpCode == 200) {
-      String payload = http.getString();
-      Serial.println("Received JSON: " + payload);
-      StaticJsonDocument<1024> doc;
-      DeserializationError error = deserializeJson(doc, payload);
-      http.end();
-      if (error) {
-        Serial.print("deserializeJson() failed: ");
-        Serial.println(error.f_str());
-        continue;
-      }
-      String sunrise = doc["results"]["sunrise"];
-      String sunset  = doc["results"]["sunset"];
-      int s = parseTime(sunrise) + _tz_offset;
-      int t = parseTime(sunset)  + _tz_offset;
-      if (s < 0) s += 86400;
-      if (t < 0) t += 86400;
-      if (s >= 86400) s -= 86400;
-      if (t >= 86400) t -= 86400;
-      _sunrise = s;
-      _sunset = t;
-      Serial.print("Parsed sunrise (sec since midnight): ");
-      Serial.println(_sunrise);
-      Serial.print("Parsed sunset  (sec since midnight): ");
-      Serial.println(_sunset);
-      return true;
-    }
-    Serial.println("Failed to fetch sunrise/sunset. Retrying...");
-    http.end();
-    delay(2000);
-  }
-  Serial.println("Failed to fetch sunrise/sunset after multiple attempts.");
-  return false;
-}
-
 int TimeSync::parseTime(String timeStr) {
+  // Parse time in ISO 8601 format (e.g., "2022-04-01T05:45:28+00:00")
   int hour = timeStr.substring(11, 13).toInt();
   int minute = timeStr.substring(14, 16).toInt();
   int second = timeStr.substring(17, 19).toInt();
+  
   return (hour * 3600) + (minute * 60) + second;
 }
 
