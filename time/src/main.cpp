@@ -1,91 +1,109 @@
-// main.cpp ////////////////////////////////////////////////////////////////////
+// main.cpp //////////////////////////////////////////////////////////////////
 
 #include <Arduino.h>
-#include "TimeSync.h"
 #include <time.h>
-#include "credentials.h" // Contains WiFi credentials
+#include "TimeSync.h"
+#include "credentials.h"
+#include "blinds.h"
+
+// Blinds Constants ////////////////////////////////////////////////////////////
+
+constexpr uint32_t BTN_PIN{5U};
+
+constexpr uint32_t TICK_PERIOD{10U}; // ms
+constexpr uint32_t BUTTON_PRESS_LENGTH{200000U}; // us
+
+constexpr uint32_t OPEN_TICKS{4200U};
+constexpr int32_t TIMEOUT{60000}; // ms
+constexpr float DUTY_CYCLE{0.40F};
+
+//                     Dir Spd Enc Lim Opn         Tmt      Dty         Pwm
+Blinds global_blinds_1(6,  2,  3,  4,  OPEN_TICKS, TIMEOUT, DUTY_CYCLE, 0);
+Blinds global_blinds_2(7,  1,  10, 9,  OPEN_TICKS, TIMEOUT, DUTY_CYCLE, 1);
+Blinds global_blinds_3(8,  0,  21, 20, OPEN_TICKS, TIMEOUT, DUTY_CYCLE, 2);
+
+// Button variables
+uint64_t buttonPressStartTime{0}; // Micros timestamp when button was pressed
+bool buttonIsPressed{false};      // Current button state
+bool buttonWasHandled{false};     // Whether the current press has been handled
 
 // Time constants
-constexpr uint32_t SECOND{1UL};
-constexpr uint32_t MINUTE{60UL * SECOND};
-constexpr uint32_t HOUR{60UL * MINUTE};
-constexpr uint32_t DAY{24UL * HOUR};
+constexpr int32_t SECOND{1};
+constexpr int32_t MINUTE{60 * SECOND};
+constexpr int32_t HOUR{60 * MINUTE};
+constexpr int32_t DAY{24 * HOUR};
 
 // Location constants
 constexpr float LATITUDE{37.7749F};
 constexpr float LONGITUDE{-122.4194F};
 
 // UTC offset in seconds (-7 hours for PDT)
-constexpr int32_t TIMEZONE_OFFSET{-7L * static_cast<int32_t>(HOUR)};
-
-// GPIO pin for onboard LED (inverted logic)
-constexpr uint8_t LED_PIN{8U};
+constexpr int32_t TIMEZONE_OFFSET{-7 * HOUR};
 
 // Timing offsets for sunrise/sunset actions
-constexpr uint32_t SUNRISE_ACTION_OFFSET{30UL * MINUTE};  // 30 minutes after sunrise
-constexpr uint32_t SUNSET_ACTION_OFFSET{30UL * MINUTE};   // 30 minutes before sunset
+constexpr int32_t SUNRISE_ACTION_OFFSET{30 * MINUTE};  // 30 minutes after sunrise
+constexpr int32_t SUNSET_ACTION_OFFSET{30 * MINUTE};   // 30 minutes before sunset
 
 // Update time constants
-constexpr uint8_t UPDATE_HOUR{2U};  // 2 AM
-constexpr uint32_t UPDATE_WINDOW{5UL * MINUTE};  // 5-minute window for updates
-constexpr uint32_t RETRY_INTERVAL_SHORT{15UL * MINUTE * 1000UL};  // 15 minutes in milliseconds
-constexpr uint32_t RETRY_INTERVAL_LONG{6UL * HOUR * 1000UL};  // 6 hours in milliseconds
+constexpr int32_t UPDATE_HOUR{2};  // 2 AM
+constexpr int32_t UPDATE_WINDOW{5 * MINUTE};  // 5-minute window for updates
+constexpr int32_t RETRY_INTERVAL_SHORT{15 * MINUTE * 1000};  // 15 minutes in milliseconds
+constexpr int32_t RETRY_INTERVAL_LONG{6 * HOUR * 1000};  // 6 hours in milliseconds
 constexpr uint8_t MAX_RETRY_COUNT_SHORT{5U};  // Number of short interval retries
 
 // Global variables for storing the time data
-uint32_t g_currentTime{0};  // Current time in seconds since midnight
-uint32_t g_sunrise{0};      // Sunrise in seconds since midnight
-uint32_t g_sunset{0};       // Sunset in seconds since midnight
+int32_t g_currentTime{0};  // Current time in seconds since midnight
+int32_t g_sunrise{0};      // Sunrise in seconds since midnight
+int32_t g_sunset{0};       // Sunset in seconds since midnight
 
 // Action tracking flags
 bool g_sunriseActionDone{false};
 bool g_sunsetActionDone{false};
 
-// LED blinking variables
-unsigned long lastLedToggleTime{0};
-bool ledState{false};
-
 // Update tracking
-bool updatedToday{false};          // Flag to track if we've already done the 2 AM update today
-uint8_t failedUpdateAttempts{0};   // Count failed update attempts
-unsigned long lastUpdateAttempt{0}; // Track when we last attempted an update
+bool updatedToday{false};         // Flag to track if we've already done the 2 AM update today
+uint8_t failedUpdateAttempts{0U}; // Count failed update attempts
+uint32_t lastUpdateAttempt{0};    // Track when we last attempted an update
 
 // Function prototypes
 void updateAllTimes();
 void printTimes();
 void formatTimeOfDay(uint32_t timeOfDay, char* buffer);
-void updateLed();
 bool isUpdateTime();
 void checkTimeActions();
 void sunriseAction();
 void sunsetAction();
+void handleButton();
+void buttonHeldFunction();
 
 // Create TimeSync instance
 TimeSync timeSync(LATITUDE, LONGITUDE, TIMEZONE_OFFSET);
 
 // Track when we last printed
-unsigned long lastPrintTime{0};
+uint32_t lastPrintTime{0};
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n\nTimeSync Example");
+  Serial.println("\n\nBlinds Control System");
   
-  // Set up LED pin
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH); // Start with LED off (inverted logic)
+  // Set up button pin with internal pull-up resistor
+  pinMode(BTN_PIN, INPUT_PULLUP);
   
   // Fetch time data on startup
   updateAllTimes();
 }
 
 void loop() {
+  // Handle button with debouncing
+  handleButton();
+  
   // Get current time from RTC and update our global current time variable
   struct tm timeinfo;
   if (getLocalTime(&timeinfo)) {
-    g_currentTime = (timeinfo.tm_hour * 3600) + 
-                   (timeinfo.tm_min * 60) + 
-                    timeinfo.tm_sec;
+    g_currentTime = (timeinfo.tm_hour * HOUR) + 
+                   (timeinfo.tm_min * MINUTE) + 
+                    timeinfo.tm_sec * SECOND;
     
     // Check if it's time for the daily update (2 AM)
     if (isUpdateTime()) {
@@ -97,16 +115,13 @@ void loop() {
   }
   
   // Print times every 5 seconds
-  if (millis() - lastPrintTime >= 5000UL) {
+  if (millis() - lastPrintTime >= 5000U) {
     printTimes();
     lastPrintTime = millis();
   }
   
-  // Update LED state (non-blocking)
-  updateLed();
-  
   // Small delay to prevent CPU hogging
-  delay(10UL);
+  delay(10U);
 }
 
 // Check if actions need to be triggered based on time of day
@@ -121,14 +136,14 @@ void checkTimeActions() {
   }
   
   // Check for sunrise action (sunrise + offset)
-  uint32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
+  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
   if (!g_sunriseActionDone && g_currentTime >= sunriseActionTime) {
     sunriseAction();
     g_sunriseActionDone = true;
   }
   
   // Check for sunset action (sunset - offset)
-  uint32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
+  int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
   if (!g_sunsetActionDone && g_currentTime >= sunsetActionTime) {
     sunsetAction();
     g_sunsetActionDone = true;
@@ -142,6 +157,10 @@ void sunriseAction() {
   formatTimeOfDay(g_currentTime, timeStr);
   Serial.print("SUNRISE ACTION TRIGGERED at ");
   Serial.println(timeStr);
+
+  global_blinds_1.open();
+  global_blinds_2.open();
+  global_blinds_3.open();
 }
 
 // Action to perform before sunset - offset
@@ -151,6 +170,10 @@ void sunsetAction() {
   formatTimeOfDay(g_currentTime, timeStr);
   Serial.print("SUNSET ACTION TRIGGERED at ");
   Serial.println(timeStr);
+
+  global_blinds_1.close();
+  global_blinds_2.close();
+  global_blinds_3.close();
 }
 
 bool isUpdateTime() {
@@ -160,16 +183,16 @@ bool isUpdateTime() {
   }
   
   // Get current time in milliseconds
-  const unsigned long currentMillis{millis()};
+  const uint32_t currentMillis{millis()};
   
   // Check for regular update time (2:00-2:05 AM window)
-  const bool isRegularUpdateTime{(timeinfo.tm_hour == UPDATE_HOUR && 
-                              timeinfo.tm_min < (UPDATE_WINDOW / MINUTE))};
+  const bool isRegularUpdateTime{(timeinfo.tm_hour == UPDATE_HOUR) && 
+                                 (timeinfo.tm_min < (UPDATE_WINDOW / MINUTE))};
   
   // Check for retry after failure based on number of previous failures
   bool isRetryTime{false};
   if (failedUpdateAttempts > 0U) {
-    unsigned long retryInterval;
+    uint32_t retryInterval;
     
     if (failedUpdateAttempts < MAX_RETRY_COUNT_SHORT) {
       // Retry every 15 minutes for the first several attempts
@@ -214,15 +237,15 @@ void updateAllTimes() {
     Serial.println(failedUpdateAttempts);
     
     // If we've failed multiple times, schedule another attempt soon
-    if (failedUpdateAttempts < 5) {
+    if (failedUpdateAttempts < MAX_RETRY_COUNT_SHORT) {
       // Try again in 15 minutes
       Serial.println("Will retry in 15 minutes");
     } else {
       // After 5 failed attempts, try again in 6 hours
       Serial.println("Will retry in 6 hours");
       // Reset the counter to avoid integer overflow during long-term operation
-      if (failedUpdateAttempts >= 10) {
-        failedUpdateAttempts = 5;
+      if (failedUpdateAttempts >= 10U) {
+        failedUpdateAttempts = 5U;
       }
     }
     return;
@@ -234,11 +257,11 @@ void updateAllTimes() {
   g_sunset = times.sunset;
   
   // Reset the failed attempts counter
-  failedUpdateAttempts = 0;
+  failedUpdateAttempts = 0U;
   
   // When we update, determine if we've already passed the action times for today
-  uint32_t sunriseActionTime = g_sunrise + SUNRISE_ACTION_OFFSET;
-  uint32_t sunsetActionTime = g_sunset - SUNSET_ACTION_OFFSET;
+  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
+  int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
   
   // If we've already passed the action times, mark them as done for today
   if (g_currentTime > sunriseActionTime) {
@@ -261,8 +284,8 @@ void printTimes() {
   formatTimeOfDay(g_sunset, sunsetStr);
   
   // Format action times
-  uint32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
-  uint32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
+  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
+  int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
   formatTimeOfDay(sunriseActionTime, sunriseActionStr);
   formatTimeOfDay(sunsetActionTime, sunsetActionStr);
   
@@ -284,43 +307,56 @@ void printTimes() {
 }
 
 void formatTimeOfDay(uint32_t timeOfDay, char* buffer) {
-  const int hours = timeOfDay / 3600;
-  const int minutes = (timeOfDay % 3600) / 60;
-  const int seconds = timeOfDay % 60;
+  const int hours{static_cast<int>(timeOfDay / 3600)};
+  const int minutes{static_cast<int>((timeOfDay % 3600) / 60)};
+  const int seconds{static_cast<int>(timeOfDay % 60)};
   
   sprintf(buffer, "%02d:%02d:%02d", hours, minutes, seconds);
 }
 
-// Function to update LED blinking pattern based on current light conditions
-void updateLed() {
-  // LED blinking at 2Hz (500ms period)
-  const unsigned long currentMillis{millis()};
+// Function to handle button press with debouncing
+void handleButton() {
+  // Read button state (LOW when pressed, HIGH when released due to pull-up)
+  int buttonState = digitalRead(BTN_PIN);
   
-  // Check if it's time to toggle the LED
-  if (currentMillis - lastLedToggleTime >= 50UL) { // Check every 50ms for finer control
-    lastLedToggleTime = currentMillis;
-    
-    // Default to nighttime pattern if we have no data yet
-    bool isDaytime{false};
-    
-    // Only check day/night status if we have valid sunrise/sunset data
-    if (g_sunrise > 0U && g_sunset > 0U) {
-      isDaytime = (g_currentTime >= g_sunrise && g_currentTime < g_sunset);
+  // Button is pressed (LOW)
+  if (buttonState == LOW) {
+    // If this is a new press
+    if (!buttonIsPressed) {
+      buttonIsPressed = true;
+      buttonPressStartTime = micros();
+      buttonWasHandled = false;
+    } 
+    // Check if button has been held long enough and not yet handled
+    else if (!buttonWasHandled && 
+             (micros() - buttonPressStartTime) >= BUTTON_PRESS_LENGTH) {
+      buttonHeldFunction();
+      buttonWasHandled = true;
     }
-    
-    // Calculate cycle position (0-499 ms within the 500ms period)
-    const unsigned long cyclePosition{(currentMillis / 50UL) % 10UL}; // 10 * 50ms = 500ms period
-    
-    if (isDaytime) {
-      // Daytime: 90% on, 10% off (9 steps on, 1 step off in a 10-step cycle)
-      ledState = (cyclePosition < 9UL);
-    } else {
-      // Nighttime: 10% on, 90% off (1 step on, 9 steps off in a 10-step cycle)
-      ledState = (cyclePosition < 1UL);
-    }
-    
-    // Set LED state (inverted logic: LOW = on, HIGH = off)
-    digitalWrite(LED_PIN, ledState ? LOW : HIGH);
+  } 
+  // Button is released
+  else if (buttonIsPressed) {
+    buttonIsPressed = false;
+  }
+}
+
+// Function to be called when button is held for the required time
+void buttonHeldFunction() {
+  Serial.println("Button held for 200ms - executing special function");
+  
+  // Toggle all blinds at once
+  if (global_blinds_1.blindsAreClosed() && 
+      global_blinds_2.blindsAreClosed() && 
+      global_blinds_3.blindsAreClosed()) {
+    Serial.println("Opening all blinds...");
+    global_blinds_1.open();
+    global_blinds_2.open();
+    global_blinds_3.open();
+  } else {
+    Serial.println("Closing all blinds...");
+    global_blinds_1.close();
+    global_blinds_2.close();
+    global_blinds_3.close();
   }
 }
 
