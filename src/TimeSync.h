@@ -9,6 +9,13 @@
 #include <ArduinoJson.h>
 #include <time.h>
 
+// Time units //////////////////////////////////////////////////////////////////
+
+constexpr int32_t SECOND{1};
+constexpr int32_t MINUTE{60 * SECOND};
+constexpr int32_t HOUR{60 * MINUTE};
+constexpr int32_t DAY{24 * HOUR};
+
 struct DaylightTimes {
   uint32_t current;  // Seconds since midnight
   uint32_t sunrise;  // Seconds since midnight

@@ -2,87 +2,418 @@
 
 // Includes ////////////////////////////////////////////////////////////////////
 
-#include <Arduino.h>
+#include <time.h>
+
+#include "config.h"
+#include "credentials.h"
 #include "blinds.h"
-#include "driver/gpio.h"
-#include "esp_timer.h"
+#include "TimeSync.h"
 
-// Constants ///////////////////////////////////////////////////////////////////
+// Global Variables ////////////////////////////////////////////////////////////
 
-constexpr gpio_num_t BTN_PIN{GPIO_NUM_5};
-constexpr uint32_t TICK_PERIOD{10U}; // ms
-constexpr uint32_t BUTTON_PRESS_LENGTH{200000U}; // us
+Blinds g_blinds1(PIN_DIR_1, PIN_SPD_1, PIN_ENC_1, PIN_LIM_1, OPEN_TICKS_1, TIMEOUT_1, DUTY_CYCLE_1, 0);
+Blinds g_blinds2(PIN_DIR_2, PIN_SPD_2, PIN_ENC_2, PIN_LIM_2, OPEN_TICKS_2, TIMEOUT_2, DUTY_CYCLE_2, 1);
+Blinds g_blinds3(PIN_DIR_3, PIN_SPD_3, PIN_ENC_3, PIN_LIM_3, OPEN_TICKS_3, TIMEOUT_3, DUTY_CYCLE_3, 2);
 
-constexpr uint32_t OPEN_TICKS{4350U};
-constexpr uint32_t TIMEOUT{60000U}; // ms
-constexpr float DUTY_CYCLE{0.45F};
+// Button variables
+uint64_t buttonPressStartTime{0}; // Micros timestamp when button was pressed
+bool buttonIsPressed{false};      // Current button state
+bool buttonWasHandled{false};     // Whether the current press has been handled
 
-// Globals /////////////////////////////////////////////////////////////////////
+// Global variables for storing the time data
+int32_t g_currentTime{0};  // Current time in seconds since midnight
+int32_t g_sunrise{0};      // Sunrise in seconds since midnight
+int32_t g_sunset{0};       // Sunset in seconds since midnight
 
-volatile bool global_button_triggered{false};
+// Action tracking flags
+bool g_sunriseActionDone{false};
+bool g_sunsetActionDone{false};
 
-bool global_open{true};
+// Update tracking
+bool updatedToday{false};         // Flag to track if we've already done the 2 AM update today
+uint8_t failedUpdateAttempts{0U}; // Count failed update attempts
+uint32_t lastUpdateAttempt{0};    // Track when we last attempted an update
 
-//                     Direction   Speed       Encoder      Limit        Open Length Timeout Duty Cycle   PWM Channel
-Blinds global_blinds_1(GPIO_NUM_6, GPIO_NUM_2, GPIO_NUM_3,  GPIO_NUM_4,  OPEN_TICKS, TIMEOUT, DUTY_CYCLE, LEDC_CHANNEL_0);
-Blinds global_blinds_2(GPIO_NUM_7, GPIO_NUM_1, GPIO_NUM_10, GPIO_NUM_9,  OPEN_TICKS, TIMEOUT, DUTY_CYCLE, LEDC_CHANNEL_1);
-Blinds global_blinds_3(GPIO_NUM_8, GPIO_NUM_0, GPIO_NUM_21, GPIO_NUM_20, OPEN_TICKS, TIMEOUT, DUTY_CYCLE, LEDC_CHANNEL_2);
+TimeSync timeSync(LATITUDE, LONGITUDE, TIMEZONE_OFFSET);
+uint32_t lastPrintTime{0};
 
-// Functions ///////////////////////////////////////////////////////////////////
+// Function Prototypes /////////////////////////////////////////////////////////
 
-extern "C" void IRAM_ATTR onButtonPress(void* arg) {
-  global_button_triggered = true;
+void updateAllTimes();
+void printTimes();
+void formatTimeOfDay(uint32_t timeOfDay, char* buffer);
+bool isUpdateTime();
+void checkTimeActions();
+void sunriseAction();
+void sunsetAction();
+void handleButton();
+void buttonHeldFunction();
+
+// Main Functions //////////////////////////////////////////////////////////////
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("\n\nBlinds Control System");
+  
+  // Set up button pin with internal pull-up resistor
+  pinMode(PIN_BTN, INPUT_PULLUP);
+  
+  // Fetch time data on startup
+  updateAllTimes();
 }
 
-// main ////////////////////////////////////////////////////////////////////////
-
-extern "C" void app_main() {
-  initArduino();  // Required for sun.cpp Arduino networking
-  delay(100);
-
-  // Configure button input with pull-up
-  gpio_config_t io_conf = {};
-  io_conf.intr_type = GPIO_INTR_NEGEDGE;
-  io_conf.mode = GPIO_MODE_INPUT;
-  io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-  io_conf.pin_bit_mask = (1ULL << BTN_PIN);
-  gpio_config(&io_conf);
-
-  // Install ISR and attach button handler
-  gpio_install_isr_service(0);
-  gpio_isr_handler_add(BTN_PIN, onButtonPress, nullptr);
-
-// Loop ////////////////////////////////////////////////////////////////////////
-  uint64_t button_press_time_us = 0;
-
-  while (true) {
-    if (global_button_triggered) {
-      if (button_press_time_us == 0) {
-        button_press_time_us = esp_timer_get_time();
-      } else if ((esp_timer_get_time() - button_press_time_us) >= BUTTON_PRESS_LENGTH) {
-        // if (global_blinds_1.blindsAreClosed() && 
-        //     global_blinds_2.blindsAreClosed() &&
-        //     global_blinds_3.blindsAreClosed()) {
-        if (global_open == false) {
-          global_blinds_1.open();
-          global_blinds_2.open();
-          global_blinds_3.open();
-          global_open = true;
-        } else {
-          global_blinds_1.close();
-          global_blinds_2.close();
-          global_blinds_3.close();
-          global_open = false;
-        }
-
-        global_button_triggered = false;
-        button_press_time_us = 0;
-      }
-    } else {
-      button_press_time_us = 0;
+void loop() {
+  // Handle button with debouncing
+  handleButton();
+  
+  // Get current time from RTC and update our global current time variable
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo)) {
+    g_currentTime = (timeinfo.tm_hour * HOUR) + 
+                   (timeinfo.tm_min * MINUTE) + 
+                    timeinfo.tm_sec * SECOND;
+    
+    // Check if it's time for the daily update (2 AM)
+    if (isUpdateTime()) {
+      updateAllTimes();
     }
+    
+    // Check if it's time to run sunrise/sunset actions
+    checkTimeActions();
+  }
+  
+  // Print times every 5 seconds
+  if (millis() - lastPrintTime >= 5000U) {
+    printTimes();
+    lastPrintTime = millis();
+  }
+  
+  // Small delay to prevent CPU hogging
+  delay(10U);
+}
 
-    vTaskDelay(pdMS_TO_TICKS(TICK_PERIOD));
+// Helper Functions ////////////////////////////////////////////////////////////
+
+// Check if actions need to be triggered based on time of day
+void checkTimeActions() {
+  // Only proceed if we have valid sunrise/sunset data
+  if (g_sunrise == 0 || g_sunset == 0 || g_currentTime == 0) {
+    Serial.println("WARNING: Cannot check time actions - invalid time data");
+    return;
+  }
+  
+  // Reset flags at midnight
+  if (g_currentTime < MINUTE) { // Within the first minute of the day
+    g_sunriseActionDone = false;
+    g_sunsetActionDone = false;
+  }
+  
+  // Check for sunrise action (sunrise + offset)
+  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
+  
+  // Validate the calculated time
+  if (sunriseActionTime < 0) sunriseActionTime = 0;
+  if (sunriseActionTime >= DAY) sunriseActionTime = DAY - 1;
+  
+  if (!g_sunriseActionDone && g_currentTime >= sunriseActionTime) {
+    sunriseAction();
+    g_sunriseActionDone = true;
+  }
+  
+  // Check for sunset action (sunset - offset)
+  int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
+  
+  // Validate the calculated time
+  if (sunsetActionTime < 0) sunsetActionTime = 0;
+  if (sunsetActionTime >= DAY) sunsetActionTime = DAY - 1;
+  
+  if (!g_sunsetActionDone && g_currentTime >= sunsetActionTime) {
+    sunsetAction();
+    g_sunsetActionDone = true;
+  }
+}
+
+// Action to perform after sunrise + offset
+void sunriseAction() {
+  // Dummy function - replace with your desired action
+  char timeStr[9];
+  formatTimeOfDay(g_currentTime, timeStr);
+  Serial.print("SUNRISE ACTION TRIGGERED at ");
+  Serial.println(timeStr);
+
+  Serial.println("Opening window 1 ...");
+  g_blinds1.open();
+  Serial.println("Opening window 2 ...");
+  g_blinds2.open();
+  Serial.println("Opening window 3 ...");
+  g_blinds3.open();
+}
+
+// Action to perform before sunset - offset
+void sunsetAction() {
+  // Dummy function - replace with your desired action
+  char timeStr[9];
+  formatTimeOfDay(g_currentTime, timeStr);
+  Serial.print("SUNSET ACTION TRIGGERED at ");
+  Serial.println(timeStr);
+
+  Serial.println("Closing window 1 ...");
+  g_blinds1.close();
+  Serial.println("Closing window 2 ...");
+  g_blinds2.close();
+  Serial.println("Closing window 3 ...");
+  g_blinds3.close();
+}
+
+bool isUpdateTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return false;
+  }
+  
+  // Get current time in milliseconds
+  const uint32_t currentMillis{millis()};
+  
+  // Check for regular update time (2:00-2:05 AM window)
+  const bool isRegularUpdateTime{(timeinfo.tm_hour == UPDATE_HOUR) && 
+                                 (timeinfo.tm_min < (UPDATE_WINDOW / MINUTE))};
+  
+  // Check for retry after failure based on number of previous failures
+  bool isRetryTime{false};
+  if (failedUpdateAttempts > 0U) {
+    uint32_t retryInterval;
+    
+    if (failedUpdateAttempts < MAX_RETRY_COUNT_SHORT) {
+      // Retry every 15 minutes for the first several attempts
+      retryInterval = RETRY_INTERVAL_SHORT;
+    } else {
+      // After MAX_RETRY_COUNT_SHORT failures, retry at longer intervals
+      retryInterval = RETRY_INTERVAL_LONG;
+    }
+    
+    isRetryTime = (currentMillis - lastUpdateAttempt >= retryInterval);
+  }
+  
+  // If we're past the update window, reset the daily flag for tomorrow
+  if (timeinfo.tm_hour > UPDATE_HOUR) {
+    updatedToday = false;
+  }
+  
+  // Determine if we should update
+  if ((isRegularUpdateTime && !updatedToday) || isRetryTime) {
+    // If this is the regular update, mark as updated for today
+    if (isRegularUpdateTime) {
+      updatedToday = true;
+    }
+    return true;
+  }
+  
+  return false;
+}
+
+void updateAllTimes() {
+  Serial.println("Attempting to fetch fresh time data...");
+  lastUpdateAttempt = millis();
+  
+  // This function connects to WiFi, gets all time data, sets the RTC, then disconnects
+  DaylightTimes times = timeSync.fetchTimeData();
+  
+  // Check if update was successful
+  if (times.current == 0 && times.sunrise == 0 && times.sunset == 0) {
+    // Update failed
+    failedUpdateAttempts++;
+    Serial.print("Time data update FAILED! Attempt #");
+    Serial.println(failedUpdateAttempts);
+    
+    // If this is our first time running and we have no time data at all,
+    // set reasonable default values to prevent crashes
+    if (g_currentTime == 0) {
+      // Read from RTC if possible
+      struct tm timeinfo;
+      if (getLocalTime(&timeinfo)) {
+        g_currentTime = (timeinfo.tm_hour * HOUR) + 
+                      (timeinfo.tm_min * MINUTE) + 
+                      timeinfo.tm_sec;
+        Serial.print("Using RTC time as fallback: ");
+        Serial.println(g_currentTime);
+      } else {
+        // No RTC time available, use a default
+        g_currentTime = 8 * HOUR; // Default to 8:00 AM
+        Serial.println("Using default time: 08:00:00");
+      }
+    }
+    
+    // Set default sunrise/sunset if we don't have any
+    if (g_sunrise == 0) {
+      g_sunrise = 6 * HOUR + 30 * MINUTE; // Default to 6:30 AM
+      Serial.println("Using default sunrise: 06:30:00");
+    }
+    
+    if (g_sunset == 0) {
+      g_sunset = 19 * HOUR + 30 * MINUTE; // Default to 7:30 PM
+      Serial.println("Using default sunset: 19:30:00");
+    }
+    
+    // If we've failed multiple times, schedule another attempt soon
+    if (failedUpdateAttempts < MAX_RETRY_COUNT_SHORT) {
+      // Try again in 15 minutes
+      Serial.println("Will retry in 15 minutes");
+    } else {
+      // After MAX_RETRY_COUNT_SHORT failed attempts, try again in 6 hours
+      Serial.println("Will retry in 6 hours");
+      // Reset the counter to avoid integer overflow during long-term operation
+      if (failedUpdateAttempts >= 10U) {
+        failedUpdateAttempts = 5U;
+      }
+    }
+    return;
+  }
+  
+  // Update was successful - store the fetched times
+  g_currentTime = times.current;
+  g_sunrise = times.sunrise;
+  g_sunset = times.sunset;
+  
+  // Make sure none of the time values are zero, which could cause issues
+  if (g_currentTime == 0 || g_sunrise == 0 || g_sunset == 0) {
+    Serial.println("WARNING: Received some zero time values despite 'successful' update");
+    
+    // Fix any zero values with defaults
+    if (g_currentTime == 0) {
+      struct tm timeinfo;
+      if (getLocalTime(&timeinfo)) {
+        g_currentTime = (timeinfo.tm_hour * HOUR) + 
+                      (timeinfo.tm_min * MINUTE) + 
+                      timeinfo.tm_sec;
+      } else {
+        g_currentTime = 8 * HOUR; // Default to 8:00 AM
+      }
+    }
+    
+    if (g_sunrise == 0) g_sunrise = 6 * HOUR + 30 * MINUTE; // Default to 6:30 AM
+    if (g_sunset == 0) g_sunset = 19 * HOUR + 30 * MINUTE; // Default to 7:30 PM
+  }
+  
+  // Reset the failed attempts counter
+  failedUpdateAttempts = 0U;
+  
+  // When we update, determine if we've already passed the action times for today
+  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
+  int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
+  
+  // Validate calculated times to prevent issues
+  if (sunriseActionTime < 0) sunriseActionTime = 0;
+  if (sunriseActionTime > DAY) sunriseActionTime = DAY - 1;
+  if (sunsetActionTime < 0) sunsetActionTime = 0;
+  if (sunsetActionTime > DAY) sunsetActionTime = DAY - 1;
+  
+  // If we've already passed the action times, mark them as done for today
+  if (g_currentTime > sunriseActionTime) {
+    g_sunriseActionDone = true;
+  }
+  
+  if (g_currentTime > sunsetActionTime) {
+    g_sunsetActionDone = true;
+  }
+  
+  Serial.println("Time data updated successfully!");
+  
+  // Print the updated times for debugging
+  char currentStr[9], sunriseStr[9], sunsetStr[9];
+  formatTimeOfDay(g_currentTime, currentStr);
+  formatTimeOfDay(g_sunrise, sunriseStr);
+  formatTimeOfDay(g_sunset, sunsetStr);
+  
+  Serial.print("Current: ");
+  Serial.print(currentStr);
+  Serial.print(" | Sunrise: ");
+  Serial.print(sunriseStr);
+  Serial.print(" | Sunset: ");
+  Serial.println(sunsetStr);
+}
+
+void printTimes() {
+  char currentStr[9], sunriseStr[9], sunsetStr[9];
+  char sunriseActionStr[9], sunsetActionStr[9];
+  
+  formatTimeOfDay(g_currentTime, currentStr);
+  formatTimeOfDay(g_sunrise, sunriseStr);
+  formatTimeOfDay(g_sunset, sunsetStr);
+  
+  // Format action times
+  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
+  int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
+  formatTimeOfDay(sunriseActionTime, sunriseActionStr);
+  formatTimeOfDay(sunsetActionTime, sunsetActionStr);
+  
+  // Check if it's daytime
+  const bool isDaytime{(g_currentTime >= g_sunrise && g_currentTime < g_sunset)};
+  
+  Serial.print("Current: ");
+  Serial.print(currentStr);
+  Serial.print(" | Sunrise: ");
+  Serial.print(sunriseStr);
+  Serial.print(" | Sunset: ");
+  Serial.print(sunsetStr);
+  Serial.print(" | It's ");
+  Serial.println(isDaytime ? "daytime" : "nighttime");
+}
+
+void formatTimeOfDay(uint32_t timeOfDay, char* buffer) {
+  const int hours{static_cast<int>(timeOfDay / 3600)};
+  const int minutes{static_cast<int>((timeOfDay % 3600) / 60)};
+  const int seconds{static_cast<int>(timeOfDay % 60)};
+  
+  sprintf(buffer, "%02d:%02d:%02d", hours, minutes, seconds);
+}
+
+// Function to handle button press with debouncing
+void handleButton() {
+  // Read button state (LOW when pressed, HIGH when released due to pull-up)
+  const int buttonState = digitalRead(PIN_BTN);
+  
+  // Button is pressed (LOW)
+  if (buttonState == LOW) {
+    // If this is a new press
+    if (!buttonIsPressed) {
+      buttonIsPressed = true;
+      buttonPressStartTime = micros();
+      buttonWasHandled = false;
+    } 
+    // Check if button has been held long enough and not yet handled
+    else if (!buttonWasHandled && 
+             (micros() - buttonPressStartTime) >= BUTTON_PRESS_LENGTH) {
+      buttonHeldFunction();
+      buttonWasHandled = true;
+    }
+  }
+  // Button is released
+  else {
+    buttonIsPressed = false;
+  }
+}
+
+// Function to be called when button is held for the required time
+void buttonHeldFunction() {
+  Serial.println("Button held for 200ms - executing special function");
+  
+  // Toggle all blinds at once
+  if (g_blinds1.blindsAreClosed() && 
+      g_blinds2.blindsAreClosed() && 
+      g_blinds3.blindsAreClosed()) {
+    Serial.println("Opening window 1 ...");
+    g_blinds1.open();
+    Serial.println("Opening window 2 ...");
+    g_blinds2.open();
+    Serial.println("Opening window 3 ...");
+    g_blinds3.open();
+  } else {
+    Serial.println("Closing window 1 ...");
+    g_blinds1.close();
+    Serial.println("Closing window 2 ...");
+    g_blinds2.close();
+    Serial.println("Closing window 3 ...");
+    g_blinds3.close();
   }
 }
 

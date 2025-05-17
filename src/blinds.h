@@ -3,9 +3,6 @@
 #pragma once
 
 #include <Arduino.h>
-#include "driver/gpio.h"
-#include "driver/ledc.h"
-#include "esp_timer.h"
 
 // Class Definition ////////////////////////////////////////////////////////////
 
@@ -26,9 +23,9 @@ public:
     ON  = HIGH
   };
 
-  Blinds(gpio_num_t dirPin, gpio_num_t spdPin, gpio_num_t encPin,
-      gpio_num_t limPin, uint32_t openTicks, uint32_t timeoutMs,
-      float dutyCycle, ledc_channel_t pwmChannel);
+  Blinds(uint8_t dirPin, uint8_t spdPin, uint8_t encPin,
+      uint8_t limPin, uint32_t travelLength, uint32_t timeoutMs,
+      float dutyCycle, uint8_t pwmChannel);
 
   void open();
   void close();
@@ -36,18 +33,31 @@ public:
   bool blindsAreClosed() const;
 
 private:
-  gpio_num_t dir_pin;
-  gpio_num_t spd_pin;
-  gpio_num_t enc_pin;
-  gpio_num_t lim_pin;
-  uint32_t open_ticks;
+  uint8_t dir_pin;
+  uint8_t spd_pin;
+  uint8_t enc_pin;
+  uint8_t lim_pin;
+  uint32_t travel_length;
   uint32_t timeout_us;
   uint32_t duty_pwm;
-  ledc_channel_t ledc_channel;
+  uint8_t ledc_channel;
 
   volatile uint32_t tick_count;
-
-  static void IRAM_ATTR isrHandler(void* arg);
+  
+  // Static interrupt handlers - one for each possible instance
+  static void IRAM_ATTR handleInterrupt0();
+  static void IRAM_ATTR handleInterrupt1();
+  static void IRAM_ATTR handleInterrupt2();
+  
+  // Static pointers to instances
+  static Blinds* instance0;
+  static Blinds* instance1;
+  static Blinds* instance2;
+  
+  // Increment tick counter
+  void IRAM_ATTR incrementTickCount();
+  
+  // Regular methods
   void runMotor(const Direction dir);
   void stopMotor();
 };

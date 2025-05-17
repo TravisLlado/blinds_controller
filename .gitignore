@@ -5,3 +5,4 @@ keys.py
 *.key
 *.pem
 .pio
+credentials.h
