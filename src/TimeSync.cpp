@@ -1,10 +1,9 @@
 // TimeSync.cpp ////////////////////////////////////////////////////////////////
 
 #include "TimeSync.h"
-#include "credentials.h"
 
-TimeSync::TimeSync(float latitude, float longitude, int timezone_offset_sec)
-  : _lat(latitude), _lon(longitude), _tz_offset(timezone_offset_sec) {
+TimeSync::TimeSync(const char* wifi_ssid, const char* wifi_password, const float latitude, const float longitude, const int timezone_offset_sec)
+  : wifi_ssid_(wifi_ssid), wifi_password_(wifi_password), _lat(latitude), _lon(longitude), _tz_offset(timezone_offset_sec) {
   // Nothing else to initialize
 }
 
@@ -41,7 +40,7 @@ bool TimeSync::connectToWiFi() {
   }
   
   // Start connection - using credentials from credentials.h
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(wifi_ssid_, wifi_password_);
   
   // Wait for connection with timeout
   unsigned long startAttempt = millis();

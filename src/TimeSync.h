@@ -25,7 +25,7 @@ struct DaylightTimes {
 class TimeSync {
 public:
   // Constructor with location and timezone parameters
-  TimeSync(float latitude, float longitude, int timezone_offset_sec);
+  TimeSync(const char* wifi_ssid, const char* wifi_password, const float latitude, const float longitude, const int timezone_offset_sec);
   
   // Function prototypes
   DaylightTimes fetchTimeData();
@@ -38,9 +38,11 @@ private:
   int parseTime(String timeStr);
   
   // Location parameters
-  float _lat;
-  float _lon;
-  int _tz_offset;
+  const char* wifi_ssid_;
+  const char* wifi_password_;
+  const float _lat;
+  const float _lon;
+  const int _tz_offset;
   
   // UDP for NTP
   WiFiUDP _udp;

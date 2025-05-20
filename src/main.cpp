@@ -34,7 +34,7 @@ bool updatedToday{false};         // Flag to track if we've already done the 2 A
 uint8_t failedUpdateAttempts{0U}; // Count failed update attempts
 uint32_t lastUpdateAttempt{0};    // Track when we last attempted an update
 
-TimeSync timeSync(LATITUDE, LONGITUDE, TIMEZONE_OFFSET);
+TimeSync timeSync(WIFI_SSID, WIFI_PASSWORD, LATITUDE, LONGITUDE, TIMEZONE_OFFSET);
 uint32_t lastPrintTime{0};
 
 // Function Prototypes /////////////////////////////////////////////////////////
