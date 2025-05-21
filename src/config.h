@@ -3,6 +3,10 @@
 #include <Arduino.h>
 #include "TimeSync.h"
 
+#define SCHEDULING true
+#define BEDROOM true
+#define SINGLE_ACTUATOR false
+
 // Program /////////////////////////////////////////////////////////////////////
 
 constexpr uint32_t TICK_PERIOD{10U}; // ms
@@ -30,7 +34,7 @@ constexpr uint8_t PIN_ENC_1{3U};
 constexpr uint8_t PIN_DIR_1{4U};
 constexpr uint8_t PIN_SPD_1{6U};
 
-constexpr uint32_t OPEN_TICKS_1{4250};
+constexpr uint32_t OPEN_TICKS_1{4275};
 constexpr float DUTY_CYCLE_1{0.40F};
 constexpr int32_t TIMEOUT_1{30000}; // ms
 
@@ -41,7 +45,7 @@ constexpr uint8_t PIN_ENC_2{7U};
 constexpr uint8_t PIN_DIR_2{8U};
 constexpr uint8_t PIN_SPD_2{1U};
 
-constexpr uint32_t OPEN_TICKS_2{4250};
+constexpr uint32_t OPEN_TICKS_2{4275};
 constexpr float DUTY_CYCLE_2{0.40F};
 constexpr int32_t TIMEOUT_2{30000}; // ms
 
@@ -52,7 +56,7 @@ constexpr uint8_t PIN_ENC_3{20U};
 constexpr uint8_t PIN_DIR_3{9U};
 constexpr uint8_t PIN_SPD_3{0U};
 
-constexpr uint32_t OPEN_TICKS_3{4250};
+constexpr uint32_t OPEN_TICKS_3{4275};
 constexpr float DUTY_CYCLE_3{0.40F};
 constexpr int32_t TIMEOUT_3{30000}; // ms
 

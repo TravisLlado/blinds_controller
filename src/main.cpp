@@ -59,34 +59,38 @@ void setup() {
   pinMode(PIN_BTN, INPUT_PULLUP);
   
   // Fetch time data on startup
-  updateAllTimes();
+  #if SCHEDULING
+    updateAllTimes();
+  #endif
 }
 
 void loop() {
   // Handle button with debouncing
   handleButton();
   
-  // Get current time from RTC and update our global current time variable
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo)) {
-    g_currentTime = (timeinfo.tm_hour * HOUR) + 
-                   (timeinfo.tm_min * MINUTE) + 
-                    timeinfo.tm_sec * SECOND;
-    
-    // Check if it's time for the daily update (2 AM)
-    if (isUpdateTime()) {
-      updateAllTimes();
+  #if SCHEDULING
+    // Get current time from RTC and update our global current time variable
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      g_currentTime = (timeinfo.tm_hour * HOUR) + 
+                    (timeinfo.tm_min * MINUTE) + 
+                      timeinfo.tm_sec * SECOND;
+      
+      // Check if it's time for the daily update (2 AM)
+      if (isUpdateTime()) {
+        updateAllTimes();
+      }
+      
+      // Check if it's time to run sunrise/sunset actions
+      checkTimeActions();
     }
     
-    // Check if it's time to run sunrise/sunset actions
-    checkTimeActions();
-  }
-  
-  // Print times every 5 seconds
-  if (millis() - lastPrintTime >= 5000U) {
-    printTimes();
-    lastPrintTime = millis();
-  }
+    // Print times every 5 seconds
+    if (millis() - lastPrintTime >= 5000U) {
+      printTimes();
+      lastPrintTime = millis();
+    }
+  #endif
   
   // Small delay to prevent CPU hogging
   delay(10U);
@@ -116,7 +120,9 @@ void checkTimeActions() {
   if (sunriseActionTime >= DAY) sunriseActionTime = DAY - 1;
   
   if (!g_sunriseActionDone && g_currentTime >= sunriseActionTime) {
-    sunriseAction();
+    #if !BEDROOM
+      sunriseAction();
+    #endif
     g_sunriseActionDone = true;
   }
   
@@ -143,10 +149,10 @@ void sunriseAction() {
 
   Serial.println("Opening window 1 ...");
   g_blinds1.open();
-  Serial.println("Opening window 2 ...");
-  g_blinds2.open();
-  Serial.println("Opening window 3 ...");
-  g_blinds3.open();
+  // Serial.println("Opening window 2 ...");
+  // g_blinds2.open();
+  // Serial.println("Opening window 3 ...");
+  // g_blinds3.open();
 }
 
 // Action to perform before sunset - offset
@@ -159,10 +165,10 @@ void sunsetAction() {
 
   Serial.println("Closing window 1 ...");
   g_blinds1.close();
-  Serial.println("Closing window 2 ...");
-  g_blinds2.close();
-  Serial.println("Closing window 3 ...");
-  g_blinds3.close();
+  // Serial.println("Closing window 2 ...");
+  // g_blinds2.close();
+  // Serial.println("Closing window 3 ...");
+  // g_blinds3.close();
 }
 
 bool isUpdateTime() {
@@ -396,7 +402,10 @@ void handleButton() {
 // Function to be called when button is held for the required time
 void buttonHeldFunction() {
   Serial.println("Button held for 200ms - executing special function");
-  
+
+  #if SINGLE_ACTUATOR
+    g_blinds1.toggle();
+  #else
   // Toggle all blinds at once
   if (g_blinds1.blindsAreClosed() && 
       g_blinds2.blindsAreClosed() && 
@@ -415,6 +424,7 @@ void buttonHeldFunction() {
     Serial.println("Closing window 3 ...");
     g_blinds3.close();
   }
+  #endif
 }
 
 // End of file /////////////////////////////////////////////////////////////////
