@@ -52,6 +52,7 @@ void buttonHeldFunction();
 // Main Functions //////////////////////////////////////////////////////////////
 
 void setup() {
+  delay(500U);
   Serial.begin(115200);
   Serial.println("\n\nBlinds Control System");
   
@@ -93,7 +94,7 @@ void loop() {
   #endif
   
   // Small delay to prevent CPU hogging
-  delay(10U);
+  delay(TICK_PERIOD);
 }
 
 // Helper Functions ////////////////////////////////////////////////////////////
@@ -149,10 +150,10 @@ void sunriseAction() {
 
   Serial.println("Opening window 1 ...");
   g_blinds1.open();
-  // Serial.println("Opening window 2 ...");
-  // g_blinds2.open();
-  // Serial.println("Opening window 3 ...");
-  // g_blinds3.open();
+  Serial.println("Opening window 2 ...");
+  g_blinds2.open();
+  Serial.println("Opening window 3 ...");
+  g_blinds3.open();
 }
 
 // Action to perform before sunset - offset
@@ -165,10 +166,10 @@ void sunsetAction() {
 
   Serial.println("Closing window 1 ...");
   g_blinds1.close();
-  // Serial.println("Closing window 2 ...");
-  // g_blinds2.close();
-  // Serial.println("Closing window 3 ...");
-  // g_blinds3.close();
+  Serial.println("Closing window 2 ...");
+  g_blinds2.close();
+  Serial.println("Closing window 3 ...");
+  g_blinds3.close();
 }
 
 bool isUpdateTime() {
