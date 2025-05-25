@@ -33,14 +33,14 @@ public:
   bool blindsAreClosed() const;
 
 private:
-  uint8_t dir_pin;
-  uint8_t spd_pin;
-  uint8_t enc_pin;
-  uint8_t lim_pin;
-  uint32_t travel_length;
-  uint32_t timeout_us;
-  uint32_t duty_pwm;
-  uint8_t ledc_channel;
+  const uint8_t dir_pin;
+  const uint8_t spd_pin;
+  const uint8_t enc_pin;
+  const uint8_t lim_pin;
+  const uint32_t travel_length;
+  const uint32_t timeout_us;
+  const uint32_t duty_pwm;
+  const uint8_t ledc_channel;
 
   volatile uint32_t tick_count;
   

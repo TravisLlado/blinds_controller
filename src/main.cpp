@@ -121,7 +121,7 @@ void checkTimeActions() {
   if (sunriseActionTime >= DAY) sunriseActionTime = DAY - 1;
   
   if (!g_sunriseActionDone && g_currentTime >= sunriseActionTime) {
-    #if !BEDROOM
+    #if AUTO_OPEN
       sunriseAction();
     #endif
     g_sunriseActionDone = true;
@@ -142,7 +142,6 @@ void checkTimeActions() {
 
 // Action to perform after sunrise + offset
 void sunriseAction() {
-  // Dummy function - replace with your desired action
   char timeStr[9];
   formatTimeOfDay(g_currentTime, timeStr);
   Serial.print("SUNRISE ACTION TRIGGERED at ");
@@ -154,11 +153,11 @@ void sunriseAction() {
   g_blinds2.open();
   Serial.println("Opening window 3 ...");
   g_blinds3.open();
+    Serial.println("Done");
 }
 
 // Action to perform before sunset - offset
 void sunsetAction() {
-  // Dummy function - replace with your desired action
   char timeStr[9];
   formatTimeOfDay(g_currentTime, timeStr);
   Serial.print("SUNSET ACTION TRIGGERED at ");
@@ -170,6 +169,7 @@ void sunsetAction() {
   g_blinds2.close();
   Serial.println("Closing window 3 ...");
   g_blinds3.close();
+    Serial.println("Done");
 }
 
 bool isUpdateTime() {
@@ -405,7 +405,9 @@ void buttonHeldFunction() {
   Serial.println("Button held for 200ms - executing special function");
 
   #if SINGLE_ACTUATOR
+    Serial.println("Toggling window 1 ...");
     g_blinds1.toggle();
+    Serial.println("Done");
   #else
   // Toggle all blinds at once
   if (g_blinds1.blindsAreClosed() && 
@@ -417,6 +419,7 @@ void buttonHeldFunction() {
     g_blinds2.open();
     Serial.println("Opening window 3 ...");
     g_blinds3.open();
+    Serial.println("Done");
   } else {
     Serial.println("Closing window 1 ...");
     g_blinds1.close();
@@ -424,6 +427,7 @@ void buttonHeldFunction() {
     g_blinds2.close();
     Serial.println("Closing window 3 ...");
     g_blinds3.close();
+    Serial.println("Done");
   }
   #endif
 }

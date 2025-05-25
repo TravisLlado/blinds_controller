@@ -57,7 +57,7 @@ Blinds::Blinds(uint8_t dirPin, uint8_t spdPin, uint8_t encPin,
 }
 
 void Blinds::open() {
-  // if (blindsAreClosed()) {
+  if (blindsAreClosed()) {
     const uint64_t start{micros()};
     uint32_t current_duty{static_cast<uint32_t>(duty_cycle_min * (1U << PWM_RES_BITS))};
     tick_count = 0U;
@@ -71,7 +71,7 @@ void Blinds::open() {
     }
     
     stopMotor();
-  // }
+  }
 }
 
 void Blinds::close() {

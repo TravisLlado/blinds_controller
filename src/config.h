@@ -4,19 +4,30 @@
 #include "TimeSync.h"
 
 #define SCHEDULING true
-#define BEDROOM true
+#define AUTO_OPEN true
 #define SINGLE_ACTUATOR false
 
-// Program /////////////////////////////////////////////////////////////////////
+// Blinds Behavior /////////////////////////////////////////////////////////////
 
-constexpr uint32_t TICK_PERIOD{10U}; // ms
+// Bedroom Distances
+// constexpr uint32_t OPEN_TICKS_1{4275};
+// constexpr uint32_t OPEN_TICKS_2{4275};
+// constexpr uint32_t OPEN_TICKS_3{4275};
 
-// Button //////////////////////////////////////////////////////////////////////
+// Living Room Distances
+constexpr uint32_t OPEN_TICKS_1{4225};
+constexpr uint32_t OPEN_TICKS_2{4225};
+constexpr uint32_t OPEN_TICKS_3{4225};
 
-constexpr uint32_t PIN_BTN{5U};
-constexpr uint32_t BUTTON_PRESS_LENGTH{200000U}; // us
+constexpr float DUTY_CYCLE_1{0.40F};
+constexpr float DUTY_CYCLE_2{0.40F};
+constexpr float DUTY_CYCLE_3{0.40F};
 
-// Wire Mappings ///////////////////////////////////////////////////////////////
+constexpr int32_t TIMEOUT_1{40000}; // ms
+constexpr int32_t TIMEOUT_2{40000}; // ms
+constexpr int32_t TIMEOUT_3{40000}; // ms
+
+// Blinds Hardware /////////////////////////////////////////////////////////////
 
 // Orange -    Speed (Blue)
 // Orange +    Direction (White)
@@ -27,38 +38,29 @@ constexpr uint32_t BUTTON_PRESS_LENGTH{200000U}; // us
 // Brown  -    Gnd (Black)
 // Brown  +    Vcc (Red)
 
-// Actuator 1 //////////////////////////////////////////////////////////////////
-
 constexpr uint8_t PIN_LIM_1{2U};
 constexpr uint8_t PIN_ENC_1{3U};
 constexpr uint8_t PIN_DIR_1{4U};
 constexpr uint8_t PIN_SPD_1{6U};
-
-constexpr uint32_t OPEN_TICKS_1{4275};
-constexpr float DUTY_CYCLE_1{0.40F};
-constexpr int32_t TIMEOUT_1{30000}; // ms
-
-// Actuator 2 //////////////////////////////////////////////////////////////////
 
 constexpr uint8_t PIN_LIM_2{10U};
 constexpr uint8_t PIN_ENC_2{7U};
 constexpr uint8_t PIN_DIR_2{8U};
 constexpr uint8_t PIN_SPD_2{1U};
 
-constexpr uint32_t OPEN_TICKS_2{4275};
-constexpr float DUTY_CYCLE_2{0.40F};
-constexpr int32_t TIMEOUT_2{30000}; // ms
-
-// Actuator 3 //////////////////////////////////////////////////////////////////
-
 constexpr uint8_t PIN_LIM_3{21U};
 constexpr uint8_t PIN_ENC_3{20U};
 constexpr uint8_t PIN_DIR_3{9U};
 constexpr uint8_t PIN_SPD_3{0U};
 
-constexpr uint32_t OPEN_TICKS_3{4275};
-constexpr float DUTY_CYCLE_3{0.40F};
-constexpr int32_t TIMEOUT_3{30000}; // ms
+// Program /////////////////////////////////////////////////////////////////////
+
+constexpr uint32_t TICK_PERIOD{10U}; // ms
+
+// Button //////////////////////////////////////////////////////////////////////
+
+constexpr uint32_t PIN_BTN{5U};
+constexpr uint32_t BUTTON_PRESS_LENGTH{200000U}; // us
 
 // Scheduling //////////////////////////////////////////////////////////////////
 
