@@ -9,23 +9,23 @@
 
 // Blinds Behavior /////////////////////////////////////////////////////////////
 
-// Bedroom Distances
-// constexpr uint32_t OPEN_TICKS_1{4275};
-// constexpr uint32_t OPEN_TICKS_2{4275};
-// constexpr uint32_t OPEN_TICKS_3{4275};
+// (~38 ticks per blind slat)
+constexpr uint32_t OPEN_TICKS{4300};
+constexpr float DUTY_CYCLE{0.40F};
+constexpr int32_t TIMEOUT{40000}; // ms
 
-// Living Room Distances
-constexpr uint32_t OPEN_TICKS_1{4225};
-constexpr uint32_t OPEN_TICKS_2{4225};
-constexpr uint32_t OPEN_TICKS_3{4225};
+// The same values seem to work fine for all three windows in both rooms
+constexpr uint32_t OPEN_TICKS_1{OPEN_TICKS};
+constexpr uint32_t OPEN_TICKS_2{OPEN_TICKS};
+constexpr uint32_t OPEN_TICKS_3{OPEN_TICKS};
 
-constexpr float DUTY_CYCLE_1{0.40F};
-constexpr float DUTY_CYCLE_2{0.40F};
-constexpr float DUTY_CYCLE_3{0.40F};
+constexpr float DUTY_CYCLE_1{DUTY_CYCLE};
+constexpr float DUTY_CYCLE_2{DUTY_CYCLE};
+constexpr float DUTY_CYCLE_3{DUTY_CYCLE};
 
-constexpr int32_t TIMEOUT_1{40000}; // ms
-constexpr int32_t TIMEOUT_2{40000}; // ms
-constexpr int32_t TIMEOUT_3{40000}; // ms
+constexpr int32_t TIMEOUT_1{TIMEOUT}; // ms
+constexpr int32_t TIMEOUT_2{TIMEOUT}; // ms
+constexpr int32_t TIMEOUT_3{TIMEOUT}; // ms
 
 // Blinds Hardware /////////////////////////////////////////////////////////////
 
