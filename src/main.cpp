@@ -25,9 +25,16 @@ int32_t g_currentTime{0};  // Current time in seconds since midnight
 int32_t g_sunrise{0};      // Sunrise in seconds since midnight
 int32_t g_sunset{0};       // Sunset in seconds since midnight
 
+// Pre-calculated action times (updated once per day)
+int32_t g_sunriseActionTime{0};  // Sunrise + offset
+int32_t g_sunsetActionTime{0};   // Sunset - offset
+
 // Action tracking flags
 bool g_sunriseActionDone{false};
 bool g_sunsetActionDone{false};
+
+// Pre-calculated daytime bounds for efficient checking
+bool g_isDaytime{false};  // Cache daytime status to avoid recalculation
 
 // Update tracking
 bool updatedToday{false};         // Flag to track if we've already done the 2 AM update today
@@ -40,10 +47,14 @@ uint32_t lastPrintTime{0};
 // Function Prototypes /////////////////////////////////////////////////////////
 
 void updateAllTimes();
+void calculateActionTimes();
+void updateDaytimeStatus();
 void printTimes();
 void formatTimeOfDay(uint32_t timeOfDay, char* buffer);
 bool isUpdateTime();
 void checkTimeActions();
+void closeAllBlinds();
+void openAllBlinds();
 void sunriseAction();
 void sunsetAction();
 void handleButton();
@@ -77,6 +88,9 @@ void loop() {
                     (timeinfo.tm_min * MINUTE) + 
                       timeinfo.tm_sec * SECOND;
       
+      // Update daytime status efficiently
+      updateDaytimeStatus();
+      
       // Check if it's time for the daily update (2 AM)
       if (isUpdateTime()) {
         updateAllTimes();
@@ -99,9 +113,34 @@ void loop() {
 
 // Helper Functions ////////////////////////////////////////////////////////////
 
+// Minimum time for sunrise action (don't open blinds too early)
+constexpr int32_t MIN_SUNRISE_ACTION_TIME = 7 * HOUR; // 7:00 AM
+
+// Calculate action times once when sunrise/sunset data is updated
+void calculateActionTimes() {
+  // Calculate sunrise action time (sunrise + offset), but not before minimum time
+  const int32_t calculatedSunriseTime = g_sunrise + SUNRISE_ACTION_OFFSET;
+  g_sunriseActionTime = (calculatedSunriseTime < MIN_SUNRISE_ACTION_TIME) ? 
+                        MIN_SUNRISE_ACTION_TIME : calculatedSunriseTime;
+  
+  // Calculate sunset action time (sunset - offset)
+  g_sunsetActionTime = g_sunset - SUNSET_ACTION_OFFSET;
+  
+  // Validate the calculated times
+  if (g_sunriseActionTime < 0) g_sunriseActionTime = 0;
+  if (g_sunriseActionTime >= DAY) g_sunriseActionTime = DAY - 1;
+  if (g_sunsetActionTime < 0) g_sunsetActionTime = 0;
+  if (g_sunsetActionTime >= DAY) g_sunsetActionTime = DAY - 1;
+}
+
+// Update daytime status efficiently
+void updateDaytimeStatus() {
+  g_isDaytime = (g_currentTime >= g_sunrise && g_currentTime < g_sunset);
+}
+
 // Check if actions need to be triggered based on time of day
 void checkTimeActions() {
-  // Only proceed if we have valid sunrise/sunset data
+  // Only proceed if we have valid time data
   if (g_sunrise == 0 || g_sunset == 0 || g_currentTime == 0) {
     Serial.println("WARNING: Cannot check time actions - invalid time data");
     return;
@@ -113,28 +152,16 @@ void checkTimeActions() {
     g_sunsetActionDone = false;
   }
   
-  // Check for sunrise action (sunrise + offset)
-  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
-  
-  // Validate the calculated time
-  if (sunriseActionTime < 0) sunriseActionTime = 0;
-  if (sunriseActionTime >= DAY) sunriseActionTime = DAY - 1;
-  
-  if (!g_sunriseActionDone && g_currentTime >= sunriseActionTime) {
+  // Check for sunrise action using pre-calculated time
+  if (!g_sunriseActionDone && (g_currentTime >= g_sunriseActionTime)) {
     #if AUTO_OPEN
       sunriseAction();
     #endif
     g_sunriseActionDone = true;
   }
   
-  // Check for sunset action (sunset - offset)
-  int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
-  
-  // Validate the calculated time
-  if (sunsetActionTime < 0) sunsetActionTime = 0;
-  if (sunsetActionTime >= DAY) sunsetActionTime = DAY - 1;
-  
-  if (!g_sunsetActionDone && g_currentTime >= sunsetActionTime) {
+  // Check for sunset action using pre-calculated time
+  if (!g_sunsetActionDone && g_currentTime >= g_sunsetActionTime) {
     sunsetAction();
     g_sunsetActionDone = true;
   }
@@ -147,13 +174,7 @@ void sunriseAction() {
   Serial.print("SUNRISE ACTION TRIGGERED at ");
   Serial.println(timeStr);
 
-  Serial.println("Opening window 1 ...");
-  g_blinds1.open();
-  Serial.println("Opening window 2 ...");
-  g_blinds2.open();
-  Serial.println("Opening window 3 ...");
-  g_blinds3.open();
-    Serial.println("Done");
+  openAllBlinds();
 }
 
 // Action to perform before sunset - offset
@@ -163,13 +184,15 @@ void sunsetAction() {
   Serial.print("SUNSET ACTION TRIGGERED at ");
   Serial.println(timeStr);
 
-  Serial.println("Closing window 1 ...");
-  g_blinds1.close();
-  Serial.println("Closing window 2 ...");
-  g_blinds2.close();
-  Serial.println("Closing window 3 ...");
-  g_blinds3.close();
-    Serial.println("Done");
+  // Close all blinds multiple times to ensure they're fully closed
+  constexpr uint8_t CLOSE_ATTEMPTS = 3;
+  for (uint8_t attempt = 1; attempt <= CLOSE_ATTEMPTS; ++attempt) {
+    Serial.print("Closing attempt ");
+    Serial.print(attempt);
+    Serial.println(":");
+    
+    closeAllBlinds();
+  }
 }
 
 bool isUpdateTime() {
@@ -223,10 +246,10 @@ void updateAllTimes() {
   lastUpdateAttempt = millis();
   
   // This function connects to WiFi, gets all time data, sets the RTC, then disconnects
-  DaylightTimes times = timeSync.fetchTimeData();
+  const DaylightTimes times = timeSync.fetchTimeData();
   
   // Check if update was successful
-  if (times.current == 0 && times.sunrise == 0 && times.sunset == 0) {
+  if ((times.current == 0) && (times.sunrise == 0) && (times.sunset == 0)) {
     // Update failed
     failedUpdateAttempts++;
     Serial.print("Time data update FAILED! Attempt #");
@@ -260,6 +283,9 @@ void updateAllTimes() {
       g_sunset = 19 * HOUR + 30 * MINUTE; // Default to 7:30 PM
       Serial.println("Using default sunset: 19:30:00");
     }
+    
+    // Calculate action times with the default values
+    calculateActionTimes();
     
     // If we've failed multiple times, schedule another attempt soon
     if (failedUpdateAttempts < MAX_RETRY_COUNT_SHORT) {
@@ -301,25 +327,19 @@ void updateAllTimes() {
     if (g_sunset == 0) g_sunset = 19 * HOUR + 30 * MINUTE; // Default to 7:30 PM
   }
   
+  // Calculate action times with the new data
+  calculateActionTimes();
+  
   // Reset the failed attempts counter
   failedUpdateAttempts = 0U;
   
   // When we update, determine if we've already passed the action times for today
-  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
-  int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
-  
-  // Validate calculated times to prevent issues
-  if (sunriseActionTime < 0) sunriseActionTime = 0;
-  if (sunriseActionTime > DAY) sunriseActionTime = DAY - 1;
-  if (sunsetActionTime < 0) sunsetActionTime = 0;
-  if (sunsetActionTime > DAY) sunsetActionTime = DAY - 1;
-  
-  // If we've already passed the action times, mark them as done for today
-  if (g_currentTime > sunriseActionTime) {
+  // Now using pre-calculated action times
+  if (g_currentTime > g_sunriseActionTime) {
     g_sunriseActionDone = true;
   }
   
-  if (g_currentTime > sunsetActionTime) {
+  if (g_currentTime > g_sunsetActionTime) {
     g_sunsetActionDone = true;
   }
   
@@ -327,16 +347,25 @@ void updateAllTimes() {
   
   // Print the updated times for debugging
   char currentStr[9], sunriseStr[9], sunsetStr[9];
+  char sunriseActionStr[9], sunsetActionStr[9];
+  
   formatTimeOfDay(g_currentTime, currentStr);
   formatTimeOfDay(g_sunrise, sunriseStr);
   formatTimeOfDay(g_sunset, sunsetStr);
+  formatTimeOfDay(g_sunriseActionTime, sunriseActionStr);
+  formatTimeOfDay(g_sunsetActionTime, sunsetActionStr);
   
   Serial.print("Current: ");
   Serial.print(currentStr);
   Serial.print(" | Sunrise: ");
   Serial.print(sunriseStr);
-  Serial.print(" | Sunset: ");
-  Serial.println(sunsetStr);
+  Serial.print(" (Action: ");
+  Serial.print(sunriseActionStr);
+  Serial.print(") | Sunset: ");
+  Serial.print(sunsetStr);
+  Serial.print(" (Action: ");
+  Serial.print(sunsetActionStr);
+  Serial.println(")");
 }
 
 void printTimes() {
@@ -346,15 +375,8 @@ void printTimes() {
   formatTimeOfDay(g_currentTime, currentStr);
   formatTimeOfDay(g_sunrise, sunriseStr);
   formatTimeOfDay(g_sunset, sunsetStr);
-  
-  // Format action times
-  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
-  int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
-  formatTimeOfDay(sunriseActionTime, sunriseActionStr);
-  formatTimeOfDay(sunsetActionTime, sunsetActionStr);
-  
-  // Check if it's daytime
-  const bool isDaytime{(g_currentTime >= g_sunrise && g_currentTime < g_sunset)};
+  formatTimeOfDay(g_sunriseActionTime, sunriseActionStr);
+  formatTimeOfDay(g_sunsetActionTime, sunsetActionStr);
   
   Serial.print("Current: ");
   Serial.print(currentStr);
@@ -363,7 +385,7 @@ void printTimes() {
   Serial.print(" | Sunset: ");
   Serial.print(sunsetStr);
   Serial.print(" | It's ");
-  Serial.println(isDaytime ? "daytime" : "nighttime");
+  Serial.println(g_isDaytime ? "daytime" : "nighttime");
 }
 
 void formatTimeOfDay(uint32_t timeOfDay, char* buffer) {
@@ -413,23 +435,37 @@ void buttonHeldFunction() {
   if (g_blinds1.blindsAreClosed() && 
       g_blinds2.blindsAreClosed() && 
       g_blinds3.blindsAreClosed()) {
-    Serial.println("Opening window 1 ...");
-    g_blinds1.open();
-    Serial.println("Opening window 2 ...");
-    g_blinds2.open();
-    Serial.println("Opening window 3 ...");
-    g_blinds3.open();
-    Serial.println("Done");
+    openAllBlinds();
   } else {
-    Serial.println("Closing window 1 ...");
-    g_blinds1.close();
-    Serial.println("Closing window 2 ...");
-    g_blinds2.close();
-    Serial.println("Closing window 3 ...");
-    g_blinds3.close();
-    Serial.println("Done");
+    closeAllBlinds();
   }
   #endif
+}
+
+void closeAllBlinds() {
+  Serial.println("Closing window 1 ...");
+  g_blinds1.close();
+
+  Serial.println("Closing window 2 ...");
+  g_blinds2.close();
+
+  Serial.println("Closing window 3 ...");
+  g_blinds3.close();
+
+  Serial.println("Done");
+}
+
+void openAllBlinds() {
+  Serial.println("Opening window 1 ...");
+  g_blinds1.open();
+
+  Serial.println("Opening window 2 ...");
+  g_blinds2.open();
+
+  Serial.println("Opening window 3 ...");
+  g_blinds3.open();
+
+  Serial.println("Done");
 }
 
 // End of file /////////////////////////////////////////////////////////////////
