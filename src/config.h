@@ -3,55 +3,24 @@
 #include <Arduino.h>
 #include "TimeSync.h"
 
-#define SCHEDULING true
-#define AUTO_OPEN true
-#define SINGLE_ACTUATOR false
+#define SCHEDULING false
+#define AUTO_OPEN false
 
 // Blinds Behavior /////////////////////////////////////////////////////////////
 
-// (~38 ticks per blind slat)
-constexpr uint32_t OPEN_TICKS{4300};
-constexpr float DUTY_CYCLE{0.40F};
-constexpr int32_t TIMEOUT{40000}; // ms
-
-// The same values seem to work fine for all three windows in both rooms
-constexpr uint32_t OPEN_TICKS_1{OPEN_TICKS};
-constexpr uint32_t OPEN_TICKS_2{OPEN_TICKS};
-constexpr uint32_t OPEN_TICKS_3{OPEN_TICKS};
-
-constexpr float DUTY_CYCLE_1{DUTY_CYCLE};
-constexpr float DUTY_CYCLE_2{DUTY_CYCLE};
-constexpr float DUTY_CYCLE_3{DUTY_CYCLE};
-
-constexpr int32_t TIMEOUT_1{TIMEOUT}; // ms
-constexpr int32_t TIMEOUT_2{TIMEOUT}; // ms
-constexpr int32_t TIMEOUT_3{TIMEOUT}; // ms
+constexpr uint32_t OPEN_TICKS{22000U};  // encoder ticks, ratio unknown currently
+constexpr uint32_t TIMEOUT{140000U};    // ms
+constexpr uint32_t RAMP_LENGTH{1000U};  // ms
+constexpr float OPEN_SPEED{0.25F};      // duty factor
+constexpr float CLOSE_SPEED{0.6F};      // duty factor
 
 // Blinds Hardware /////////////////////////////////////////////////////////////
 
-// Orange -    Speed (Blue)
-// Orange +    Direction (White)
-// Green  -    Encoder (Yellow)
-// Blue   +    Vcc (Red)
-// Blue   -    Gnd (Black)
-// Green  +    Limit (Orange)
-// Brown  -    Gnd (Black)
-// Brown  +    Vcc (Red)
-
-constexpr uint8_t PIN_LIM_1{2U};
-constexpr uint8_t PIN_ENC_1{3U};
-constexpr uint8_t PIN_DIR_1{4U};
-constexpr uint8_t PIN_SPD_1{6U};
-
-constexpr uint8_t PIN_LIM_2{10U};
-constexpr uint8_t PIN_ENC_2{7U};
-constexpr uint8_t PIN_DIR_2{8U};
-constexpr uint8_t PIN_SPD_2{1U};
-
-constexpr uint8_t PIN_LIM_3{21U};
-constexpr uint8_t PIN_ENC_3{20U};
-constexpr uint8_t PIN_DIR_3{9U};
-constexpr uint8_t PIN_SPD_3{0U};
+constexpr uint8_t PIN_BRK{3U};
+constexpr uint8_t PIN_DIR{2U};
+constexpr uint8_t PIN_ENC{0U};
+constexpr uint8_t PIN_LIM{4U};
+constexpr uint8_t PIN_SPD{1U};
 
 // Program /////////////////////////////////////////////////////////////////////
 
@@ -59,8 +28,8 @@ constexpr uint32_t TICK_PERIOD{10U}; // ms
 
 // Button //////////////////////////////////////////////////////////////////////
 
-constexpr uint32_t PIN_BTN{5U};
-constexpr uint32_t BUTTON_PRESS_LENGTH{200000U}; // us
+constexpr uint32_t PIN_BTN{9U};
+constexpr uint32_t BUTTON_PRESS_LENGTH{150U}; // ms
 
 // Scheduling //////////////////////////////////////////////////////////////////
 
