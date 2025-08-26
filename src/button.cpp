@@ -1,7 +1,9 @@
 // button.cpp //////////////////////////////////////////////////////////////////
+
 #include "button.h"
 
 // Constructor /////////////////////////////////////////////////////////////////
+
 Button::Button(uint8_t pin, uint32_t holdTimeMs, PinLogic logic, ButtonCallback callback)
     : button_pin(pin),
       hold_time_us(holdTimeMs * 1000U),
@@ -10,6 +12,7 @@ Button::Button(uint8_t pin, uint32_t holdTimeMs, PinLogic logic, ButtonCallback 
 }
 
 // Public Methods //////////////////////////////////////////////////////////////
+
 void Button::begin() {
     // Configure pin based on logic type
     if (pin_logic == ACTIVE_LOW) {
@@ -75,6 +78,7 @@ uint32_t Button::getPressTime() const {
 }
 
 // Private Methods /////////////////////////////////////////////////////////////
+
 bool Button::readPin() const {
     const bool pin_state = digitalRead(button_pin);
     

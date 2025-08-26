@@ -5,16 +5,16 @@
 constexpr uint32_t PWM_FREQ_HZ{20000U};
 constexpr uint8_t PWM_RES_BITS{8U};
 constexpr uint8_t PWM_CHANNEL{0U};
-constexpr uint32_t MOTION_TICK_MS{1U}; // ms - control loop interval
-constexpr uint32_t STUCK_TIMEOUT_MS{500U}; // ms - timeout for blockage detection
-constexpr uint8_t LIMIT_DEBOUNCE_COUNT{5U}; // number of consecutive readings for debounce
-constexpr uint32_t SLOW_APPROACH_DISTANCE{150U}; // ticks - slow down when below this
-constexpr float SLOW_APPROACH_SPEED{0.25F}; // duty factor for slow approach
+constexpr uint32_t MOTION_TICK_MS{1U};
+constexpr uint32_t STUCK_TIMEOUT_MS{2000U};
+constexpr uint8_t LIMIT_DEBOUNCE_COUNT{5U};
+constexpr uint32_t SLOW_APPROACH_DISTANCE{150U}; // encoder ticks
+constexpr float SLOW_APPROACH_SPEED{0.25F};
 
 // Global variables ////////////////////////////////////////////////////////////
 // Encoder tracking
 volatile uint32_t g_tick_count = 0;
-volatile int32_t g_position = 0; // Absolute position (can be negative)
+volatile int32_t g_position = 0;
 volatile Blinds::MotorDirection g_current_direction = Blinds::MotorDirection::OPEN;
 
 // Public //////////////////////////////////////////////////////////////////////
