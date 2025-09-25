@@ -1,9 +1,10 @@
 // config.h ////////////////////////////////////////////////////////////////////
 
 #include <Arduino.h>
+#include "timesync.h"
 
-constexpr bool SCHEDULING {true};
-constexpr bool AUTO_OPEN  {false};
+#define SCHEDULING true
+#define AUTO_OPEN  false
 
 // RS485 ///////////////////////////////////////////////////////////////////////
 
@@ -28,11 +29,11 @@ constexpr uint8_t END_BYTE      {0x55};
 
 // Blinds Behavior /////////////////////////////////////////////////////////////
 
-constexpr uint32_t OPEN_TICKS     {22000U};   // encoder ticks
-constexpr uint32_t MOTION_TIMEOUT {140000U}; // ms
-constexpr uint32_t RAMP_LENGTH    {1000U};   // ms
-constexpr float    OPEN_SPEED     {0.25F};   // duty factor
-constexpr float    CLOSE_SPEED    {0.6F};    // duty factor
+constexpr uint32_t OPEN_TICKS     {21500U};   // encoder ticks
+constexpr uint32_t MOTION_TIMEOUT {145000U};  // ms
+constexpr uint32_t RAMP_LENGTH    {1000U};    // ms
+constexpr float    OPEN_SPEED     {0.3F};     // duty factor
+constexpr float    CLOSE_SPEED    {0.7F};     // duty factor
 
 // Blinds Hardware /////////////////////////////////////////////////////////////
 
@@ -41,6 +42,26 @@ constexpr uint8_t PIN_DIR {10U};
 constexpr uint8_t PIN_ENC {4U};
 constexpr uint8_t PIN_LIM {6U};
 constexpr uint8_t PIN_SPD {3U};
+
+// Scheduling //////////////////////////////////////////////////////////////////
+
+// Location constants
+constexpr float LATITUDE{37.7749F};
+constexpr float LONGITUDE{-122.4194F};
+
+// UTC offset in seconds (-7 hours for PDT)
+constexpr int32_t TIMEZONE_OFFSET{-7 * HOUR};
+
+// Timing offsets for sunrise/sunset actions
+constexpr int32_t SUNRISE_ACTION_OFFSET{30 * MINUTE};  // 30 minutes after sunrise
+constexpr int32_t SUNSET_ACTION_OFFSET{30 * MINUTE};   // 30 minutes before sunset
+
+// Update time constants
+constexpr int32_t UPDATE_HOUR{2};  // 2 AM
+constexpr int32_t UPDATE_WINDOW{5 * MINUTE};  // 5-minute window for updates
+constexpr int32_t RETRY_INTERVAL_SHORT{15 * MINUTE * 1000};  // 15 minutes in milliseconds
+constexpr int32_t RETRY_INTERVAL_LONG{6 * HOUR * 1000};  // 6 hours in milliseconds
+constexpr uint8_t MAX_RETRY_COUNT_SHORT{5U};  // Number of short interval retries
 
 // Program /////////////////////////////////////////////////////////////////////
 
