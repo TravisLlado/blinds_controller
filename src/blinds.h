@@ -5,24 +5,21 @@
 #include <cmath>
 
 // Class Definition ////////////////////////////////////////////////////////////
-
 class Blinds {
 public:
     enum MotorDirection {
         CLOSE = LOW,
         OPEN = HIGH
     };
-    
-    enum LimitSwitchState {
-        PRESSED = LOW,
-        RELEASED = HIGH
+
+    enum MotorState {
+        ENABLE = HIGH,
+        DISABLE = LOW
     };
     
-    // Constructor uses BLDC phase pins, enable pin, limit switch, pole pairs, and cycles for distance
-    Blinds(uint8_t phaseAPin, uint8_t phaseBPin, uint8_t phaseCPin,
-           uint8_t enablePin, uint8_t limPin,
-           float polePairs, float cyclesPerTravel, uint32_t timeoutMs,
-           float openSpeedRpm, float closeSpeedRpm, uint32_t rampDurationMs);
+    Blinds(uint8_t pin_a, uint8_t pin_b, uint8_t pin_c, uint8_t pin_enable,
+        uint8_t pin_limit, uint8_t num_pole_pairs, float motion_length,
+        uint32_t motion_timeout, float motor_speed_max); 
     
     bool blindsAreClosed() const;
     void close() const;
@@ -30,31 +27,37 @@ public:
     void toggle() const;
 
 private:
-    // --- BLDC Motor Pins and Parameters ---
-    const uint8_t phase_a_pin;
-    const uint8_t phase_b_pin;
-    const uint8_t phase_c_pin;
-    const uint8_t enable_pin;
-    const float motor_pole_pairs;
+    const uint8_t pin_motor_phase_a;
+    const uint8_t pin_motor_phase_b;
+    const uint8_t pin_motor_phase_c;
+    const uint8_t pin_enable;
+    const uint8_t pin_limit;
+    const uint8_t num_pole_pairs;
+    const float   motor_speed_max;
 
-    // --- Blinds Pins and Parameters ---
-    const uint8_t lim_pin;
-    const float travel_cycles; // Total electrical cycles to fully open the blinds
-    const uint32_t timeout_us;
-    
-    // Motor speeds in RPM
-    const float open_speed_rpm;
-    const float close_speed_rpm;
-    const uint32_t ramp_duration_ms; 
+    const float   motion_length;    // motor turns
+    const uint32_t motion_timeout;  // ms
 
-    // --- BLDC Control State ---
-    // Position tracking uses integrated electrical angle and cycles
-    mutable float current_electrical_angle = 0.0f; // Stored for smooth starting of next move
-    mutable float current_cycle_count = 0.0f;     // Tracks position in electrical cycles (0.0 = Closed)
+    const uint32_t  TICK_PERIOD     {1U};             // ms
+    const uint8_t   LIMIT_DEBOUNCE_COUNT{5U};
+    const float     SLOW_APPROACH_DISTANCE    {10.0F};  // motor turns from expected stop
+    const float     SLOW_APPROACH_SPEED       {0.25F};     // factor of max speed
+    const float     RAMP_RATE{200.0F};              // RPM/sec
+    const float     MOTOR_AMPLITUDE_MAX{0.9F};
+    const int       PWM_FREQUENCY{20000};             // hz
+    const int       PWM_RESOLUTION{8};                // bits
+    const int       PWM_MAX_VALUE{(1 << PWM_RESOLUTION) - 1};
+    const uint8_t   PHASE_A_PWM_CHANNEL{0};
+    const uint8_t   PHASE_B_PWM_CHANNEL{1};
+    const uint8_t   PHASE_C_PWM_CHANNEL{2};
 
-    // Motor control methods
-    void motorMove(MotorDirection direction, float target_speed_rpm, bool (*exitCondition)(const Blinds*)) const;
-    void motorStop() const;
+    const uint32_t duty_max = (1 << PWM_RESOLUTION) - 1;
+    const float increment_max{motor_speed_max / 60.0F * TICK_PERIOD / 1000U};
+    const float increment_increment{RAMP_RATE / 60.0F * TICK_PERIOD / 1000U / 1000U};
+
+    void motorDisable() const;
+    void motorEnable() const;
+    void motorPosition(float electricalAngle, float amplitude) const;
 };
 
 // End of file /////////////////////////////////////////////////////////////////

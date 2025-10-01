@@ -28,20 +28,17 @@ constexpr uint8_t START_BYTE    {0xAA};
 constexpr uint8_t END_BYTE      {0x55};
 
 // Blinds Behavior /////////////////////////////////////////////////////////////
-
-constexpr uint32_t OPEN_TICKS     {21500U};   // encoder ticks
-constexpr uint32_t MOTION_TIMEOUT {145000U};  // ms
-constexpr uint32_t RAMP_LENGTH    {1000U};    // ms
-constexpr float    OPEN_SPEED     {0.3F};     // duty factor
-constexpr float    CLOSE_SPEED    {0.7F};     // duty factor
+constexpr float    MOTION_LENGTH    {450.0F}; // motor turns
+constexpr float    MOTOR_SPEED_MAX  {420.0F}; // motor RPM
+constexpr uint32_t MOTION_TIMEOUT   {66000U}; // ms
 
 // Blinds Hardware /////////////////////////////////////////////////////////////
-
-constexpr uint8_t PIN_BRK {7U};
-constexpr uint8_t PIN_DIR {10U};
-constexpr uint8_t PIN_ENC {4U};
-constexpr uint8_t PIN_LIM {6U};
-constexpr uint8_t PIN_SPD {3U};
+constexpr uint8_t PIN_PHA {5U};
+constexpr uint8_t PIN_PHB {6U};
+constexpr uint8_t PIN_PHC {7U};
+constexpr uint8_t PIN_ENABLE {3U};
+constexpr uint8_t PIN_LIM {4U};
+constexpr uint8_t NUM_POLE_PAIRS {7U};
 
 // Scheduling //////////////////////////////////////////////////////////////////
 
@@ -73,25 +70,3 @@ constexpr uint32_t PIN_BTN {9U};
 constexpr uint32_t BUTTON_PRESS_LENGTH {150U};  // ms
 
 // End of file /////////////////////////////////////////////////////////////////
-
-// Pin definitions for SimpleFOC Mini Board
-#define PHASE_A_PIN 0    // Connect to PWM_A
-#define PHASE_B_PIN 1    // Connect to PWM_B
-#define PHASE_C_PIN 2    // Connect to PWM_C
-#define ENABLE_PIN 3     // Connect to ENABLE (combined enable)
-#define LED_PIN 8        // Onboard LED (inverted logic)
-
-// PWM settings
-#define PWM_FREQUENCY 20000
-#define PWM_RESOLUTION 8
-#define PWM_MAX_VALUE 255
-#define LED_PWM_CHANNEL 3
-
-// Motor parameters
-#define MOTOR_POLE_PAIRS 7
-#define MAX_RPM 420
-#define MOTOR_AMPLITUDE 0.9
-#define RAMP_TIME_MS 1000
-#define STATIONARY_HOLD_MS 1000
-#define MAX_SPEED_HOLD_MS 20000
-

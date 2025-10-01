@@ -20,7 +20,19 @@ void executeCommand(const uint8_t cmd);
 // Globals /////////////////////////////////////////////////////////////////////
 
 HardwareSerial rs485_g(0);
-Blinds blinds_g(PIN_DIR, PIN_SPD, PIN_ENC, PIN_LIM, PIN_BRK, OPEN_TICKS, MOTION_TIMEOUT, OPEN_SPEED, CLOSE_SPEED, RAMP_LENGTH);
+
+Blinds blinds_g(
+    PIN_PHA,
+    PIN_PHB,
+    PIN_PHC,
+    PIN_ENABLE,
+    PIN_LIM,
+    NUM_POLE_PAIRS,
+    MOTION_LENGTH,
+    MOTION_TIMEOUT,
+    MOTOR_SPEED_MAX
+);
+
 Button button_g(PIN_BTN, BUTTON_PRESS_LENGTH, Button::ACTIVE_LOW, buttonAction);
 
 // Helpers /////////////////////////////////////////////////////////////////////
