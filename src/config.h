@@ -8,7 +8,7 @@
 
 // RS485 ///////////////////////////////////////////////////////////////////////
 
-const uint8_t NUM_SLAVES  {3};
+const uint8_t NUM_SLAVES  {1};
 const uint8_t RX_TIMEOUT  {200};
 
 #ifndef SLAVE_ADDRESS
@@ -33,12 +33,12 @@ constexpr float    MOTOR_SPEED_MAX  {420.0F}; // motor RPM
 constexpr uint32_t MOTION_TIMEOUT   {66000U}; // ms
 
 // Blinds Hardware /////////////////////////////////////////////////////////////
-constexpr uint8_t PIN_PHA {5U};
-constexpr uint8_t PIN_PHB {6U};
-constexpr uint8_t PIN_PHC {7U};
-constexpr uint8_t PIN_ENABLE {3U};
-constexpr uint8_t PIN_LIM {4U};
-constexpr uint8_t NUM_POLE_PAIRS {7U};
+constexpr uint8_t PIN_PHASE_A     {5U};
+constexpr uint8_t PIN_PHASE_B     {6U};
+constexpr uint8_t PIN_PHASE_C     {7U};
+constexpr uint8_t PIN_ENABLE      {3U};
+constexpr uint8_t PIN_LIMIT       {4U};
+constexpr uint8_t NUM_POLE_PAIRS  {7U};
 
 // Scheduling //////////////////////////////////////////////////////////////////
 

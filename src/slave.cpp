@@ -22,11 +22,11 @@ void executeCommand(const uint8_t cmd);
 HardwareSerial rs485_g(0);
 
 Blinds blinds_g(
-    PIN_PHA,
-    PIN_PHB,
-    PIN_PHC,
+    PIN_PHASE_A,
+    PIN_PHASE_B,
+    PIN_PHASE_C,
     PIN_ENABLE,
-    PIN_LIM,
+    PIN_LIMIT,
     NUM_POLE_PAIRS,
     MOTION_LENGTH,
     MOTION_TIMEOUT,
