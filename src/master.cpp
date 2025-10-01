@@ -38,7 +38,7 @@ void sunsetAction();
 // RS485 Communication
 HardwareSerial rs485(0);
 SystemState systemState = IDLE;
-bool slaveStates[NUM_SLAVES] = {false, false, false};  // false=closed, true=open
+bool slaveStates[NUM_SLAVES] = {false, false};  // false=closed, true=open
 bool targetOpen = false;  // What we're moving blinds to
 unsigned long currentSlaveStart = 0;  // Track start time for current slave
 unsigned long lastHeartbeat = 0;

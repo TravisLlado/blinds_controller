@@ -8,7 +8,7 @@
 
 // RS485 ///////////////////////////////////////////////////////////////////////
 
-const uint8_t NUM_SLAVES  {3};
+const uint8_t NUM_SLAVES  {2};
 const uint8_t RX_TIMEOUT  {200};
 
 #ifndef SLAVE_ADDRESS
