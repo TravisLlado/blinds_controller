@@ -2,9 +2,9 @@
 #include "blinds.h"
 
 // Public //////////////////////////////////////////////////////////////////////
-Blinds::Blinds(uint8_t pin_a, uint8_t pin_b, uint8_t pin_c, uint8_t pin_enable,
-    uint8_t pin_limit, uint8_t num_pole_pairs, float motion_length,
-    uint32_t motion_timeout, float motor_speed_max) 
+Blinds::Blinds(uint32_t pin_a, uint32_t pin_b, uint32_t pin_c, uint32_t pin_enable,
+    uint32_t pin_limit, uint32_t num_pole_pairs, float motion_length,
+    float motion_timeout, float motor_speed_max) 
     : pin_motor_phase_a(pin_a), pin_motor_phase_b(pin_b), pin_motor_phase_c(pin_c),
       pin_enable(pin_enable), pin_limit(pin_limit),
       num_pole_pairs(num_pole_pairs), motion_length(motion_length),
@@ -32,51 +32,11 @@ bool Blinds::blindsAreClosed() const {
 }
 
 void Blinds::close() const {
-    if (!blindsAreClosed()) {
-        Serial.println("Closing blinds ...");
-        
-        float position{0.0F};
-        float increment{0.0F};
-        uint32_t tick_count{0U};
-
-        motorPosition(0.0F, MOTOR_AMPLITUDE_MAX);
-        motorEnable();
-        delay(10U);
-
-        while ((position < motion_length) && (tick_count < (motion_timeout / TICK_PERIOD)) && !blindsAreClosed()) {
-            increment = ((increment + increment_increment) > increment_max) ? (increment_max) : (increment + increment_increment);
-            position += increment;
-            motorPosition(-position, MOTOR_AMPLITUDE_MAX);
-            delay(TICK_PERIOD);
-            tick_count++;
-        }
-        motorDisable();
-    }
-
-    Serial.println("Blinds are closed");
+    motorMove(true);
 }
 
 void Blinds::open() const {
-    Serial.println("Opening blinds ...");
-
-    float position{0.0F};
-    float increment{0.0F};
-    uint32_t tick_count{0U};
-
-    motorPosition(0.0F, MOTOR_AMPLITUDE_MAX);
-    motorEnable();
-    delay(10U);
-
-    while ((position < motion_length) && (tick_count < (motion_timeout / TICK_PERIOD))) {
-        increment = ((increment + increment_increment) > increment_max) ? (increment_max) : (increment + increment_increment);
-        position += increment;
-        motorPosition(position, MOTOR_AMPLITUDE_MAX);
-        delay(TICK_PERIOD);
-        tick_count++;
-    }
-    motorDisable();
-
-    Serial.println("Blinds are open");
+    motorMove(false);
 }
 
 void Blinds::toggle() const {
@@ -88,6 +48,37 @@ void Blinds::toggle() const {
 }
 
 // Private /////////////////////////////////////////////////////////////////////
+
+void Blinds::motorMove(const bool close) const {    
+    if (!close || !blindsAreClosed()) {
+        Serial.println(close ? "Closing blinds ..." : "Opening blinds ...");
+        
+        float position{0.0F};
+        float increment{0.0F};
+
+        motorPosition(0.0F, MOTOR_AMPLITUDE_MAX);
+        motorEnable();
+        delay(10U);
+
+        const uint32_t timestamp_start{micros()};
+        const uint32_t timestamp_timeout{timestamp_start + (uint32_t)(motion_timeout * 1000000U)};
+        const uint32_t tick_period{1000000U / TICK_FREQ};
+        uint32_t end_tick{micros() + tick_period};
+
+        while ((position < motion_length) && (micros() < timestamp_timeout) && (close ? !blindsAreClosed() : true)) {
+            increment = ((increment + increment_increment) > increment_max) ? (increment_max) : (increment + increment_increment);
+            position += increment;
+            motorPosition((close ? -position : position), MOTOR_AMPLITUDE_MAX);
+            delayMicroseconds(1000000U / TICK_FREQ);
+            
+            while(micros() < end_tick) {}
+            end_tick += tick_period;
+        }
+        motorDisable();
+    }
+
+    Serial.println(close ? "Blinds are closed" : "Blinds are open");
+}
 
 void Blinds::motorPosition(const float motor_position, const float amplitude) const {
     const float electrical_position{motor_position * 2.0F * (float)PI * num_pole_pairs};
@@ -106,11 +97,11 @@ void Blinds::motorPosition(const float motor_position, const float amplitude) co
 }
 
 void Blinds::motorDisable() const {
-    digitalWrite(pin_enable, MotorState::DISABLE);
+    digitalWrite(pin_enable, LOW);
 }
 
 void Blinds::motorEnable() const {
-    digitalWrite(pin_enable, MotorState::ENABLE);
+    digitalWrite(pin_enable, HIGH);
 }
 
 // End of file /////////////////////////////////////////////////////////////////

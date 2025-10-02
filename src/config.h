@@ -28,9 +28,9 @@ constexpr uint8_t START_BYTE    {0xAA};
 constexpr uint8_t END_BYTE      {0x55};
 
 // Blinds Behavior /////////////////////////////////////////////////////////////
-constexpr float    MOTION_LENGTH    {450.0F}; // motor turns
-constexpr float    MOTOR_SPEED_MAX  {420.0F}; // motor RPM
-constexpr uint32_t MOTION_TIMEOUT   {66000U}; // ms
+constexpr float MOTION_LENGTH    {14.0F * 30.0F}; // motor turns
+constexpr float MOTOR_SPEED_MAX  {450.0F}; // motor RPM
+constexpr float MOTION_TIMEOUT   {66.0F};  // sec
 
 // Blinds Hardware /////////////////////////////////////////////////////////////
 constexpr uint8_t PIN_PHASE_A     {5U};
