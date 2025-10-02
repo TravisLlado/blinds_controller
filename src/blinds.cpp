@@ -69,7 +69,6 @@ void Blinds::motorMove(const bool close) const {
             increment = ((increment + increment_increment) > increment_max) ? (increment_max) : (increment + increment_increment);
             position += increment;
             motorPosition((close ? -position : position), MOTOR_AMPLITUDE_MAX);
-            delayMicroseconds(1000000U / TICK_FREQ);
             
             while(micros() < end_tick) {}
             end_tick += tick_period;
@@ -87,9 +86,9 @@ void Blinds::motorPosition(const float motor_position, const float amplitude) co
     const float phaseB_norm = sin(electrical_position + (2.0F * PI / 3.0F));
     const float phaseC_norm = sin(electrical_position - (2.0F * PI / 3.0F));
     
-    const int phaseA_pwm = constrain((int)(duty_max/2 + amplitude * duty_max/2 * phaseA_norm), 0, duty_max);
-    const int phaseB_pwm = constrain((int)(duty_max/2 + amplitude * duty_max/2 * phaseB_norm), 0, duty_max);
-    const int phaseC_pwm = constrain((int)(duty_max/2 + amplitude * duty_max/2 * phaseC_norm), 0, duty_max);
+    const int phaseA_pwm = constrain((int)(duty_max / 2.0F + amplitude * duty_max / 2.0F * phaseA_norm), 0, duty_max);
+    const int phaseB_pwm = constrain((int)(duty_max / 2.0F + amplitude * duty_max / 2.0F * phaseB_norm), 0, duty_max);
+    const int phaseC_pwm = constrain((int)(duty_max / 2.0F + amplitude * duty_max / 2.0F * phaseC_norm), 0, duty_max);
     
     ledcWrite(PHASE_A_PWM_CHANNEL, phaseA_pwm);
     ledcWrite(PHASE_B_PWM_CHANNEL, phaseB_pwm);
