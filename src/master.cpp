@@ -94,10 +94,10 @@ void setup() {
   // Fetch time data on startup
   #if SCHEDULING
     updateAllTimes();
+    Serial.println("Automatic scheduling based on sunrise/sunset active.");
   #endif
   
   Serial.println("Ready. Manual button control available.");
-  Serial.println("Automatic scheduling based on sunrise/sunset active.");
 }
 
 void loop() {
@@ -144,7 +144,7 @@ void loop() {
   
   // Timeout check - per slave, not entire operation
   if (systemState != IDLE) {
-    if ((millis() - currentSlaveStart) > (MOTION_TIMEOUT + 1000U)) {
+    if ((millis() - currentSlaveStart) > (MOTION_TIMEOUT * 1000U + 1000U)) {
       Serial.printf("Master: Slave %d timeout - aborting entire operation\n", 
                     (systemState == MOVING_SLAVE_1) ? 1 : 
                     (systemState == MOVING_SLAVE_2) ? 2 : 3);

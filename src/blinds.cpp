@@ -1,5 +1,6 @@
 // blinds.cpp //////////////////////////////////////////////////////////////////
 #include "blinds.h"
+#include "fast_trig.h"
 
 // Public //////////////////////////////////////////////////////////////////////
 Blinds::Blinds(uint32_t pin_a, uint32_t pin_b, uint32_t pin_c, uint32_t pin_enable,
@@ -82,9 +83,9 @@ void Blinds::motorMove(const bool close) const {
 void Blinds::motorPosition(const float motor_position, const float amplitude) const {
     const float electrical_position{motor_position * 2.0F * (float)PI * num_pole_pairs};
     
-    const float phaseA_norm = sin(electrical_position);
-    const float phaseB_norm = sin(electrical_position + (2.0F * PI / 3.0F));
-    const float phaseC_norm = sin(electrical_position - (2.0F * PI / 3.0F));
+    const float phaseA_norm = fast_sin_interp(electrical_position);
+    const float phaseB_norm = fast_sin_interp(electrical_position + (2.0F * PI / 3.0F));
+    const float phaseC_norm = fast_sin_interp(electrical_position - (2.0F * PI / 3.0F));
     
     const int phaseA_pwm = constrain((int)(duty_max / 2.0F + amplitude * duty_max / 2.0F * phaseA_norm), 0, duty_max);
     const int phaseB_pwm = constrain((int)(duty_max / 2.0F + amplitude * duty_max / 2.0F * phaseB_norm), 0, duty_max);

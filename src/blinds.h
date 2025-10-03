@@ -32,7 +32,7 @@ private:
     const uint32_t PHASE_A_PWM_CHANNEL    {0U};
     const uint32_t PHASE_B_PWM_CHANNEL    {1U};
     const uint32_t PHASE_C_PWM_CHANNEL    {2U};
-    const uint32_t TICK_FREQ              {2000U};  // Hz
+    const uint32_t TICK_FREQ              {5000U};  // Hz
     const float    SLOW_APPROACH_DISTANCE {10.0F};  // motor turns from expected stop
     const float    SLOW_APPROACH_SPEED    {0.25F};  // factor of max speed
     const float    RAMP_RATE              {200.0F}; // RPM/sec
