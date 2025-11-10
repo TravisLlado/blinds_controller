@@ -3,13 +3,13 @@
 #include <Arduino.h>
 #include "timesync.h"
 
-#define SCHEDULING false
+#define SCHEDULING true
 #define AUTO_OPEN  false
 
 // RS485 ///////////////////////////////////////////////////////////////////////
 
-const uint8_t NUM_SLAVES  {1};
-const uint8_t RX_TIMEOUT  {200};
+const uint8_t NUM_SLAVES  {2};
+const uint8_t RX_TIMEOUT  {200};  // ms
 
 #ifndef SLAVE_ADDRESS
   constexpr uint32_t SLAVE_ADDRESS  {1};
@@ -29,16 +29,16 @@ constexpr uint8_t END_BYTE      {0x55};
 
 // Blinds Behavior /////////////////////////////////////////////////////////////
 constexpr float MOTION_LENGTH    {12.6F * 30.0F}; // motor turns
-constexpr float MOTOR_SPEED_MAX  {420.0F}; // motor RPM
-constexpr float MOTION_TIMEOUT   {60.0F * MOTION_LENGTH / MOTOR_SPEED_MAX * 1.1F}; // sec
+constexpr float MOTOR_SPEED_MAX  {1200.0F}; // motor RPM
+constexpr float MOTION_TIMEOUT   {60.0F * MOTION_LENGTH / MOTOR_SPEED_MAX * 1.5F}; // sec
 
 // Blinds Hardware /////////////////////////////////////////////////////////////
 constexpr uint8_t PIN_PHASE_A     {5U};
 constexpr uint8_t PIN_PHASE_B     {6U};
 constexpr uint8_t PIN_PHASE_C     {7U};
-constexpr uint8_t PIN_ENABLE      {3U};
+constexpr uint8_t PIN_ENABLE      {10U};
 constexpr uint8_t PIN_LIMIT       {4U};
-constexpr uint8_t NUM_POLE_PAIRS  {7U};
+constexpr uint8_t NUM_POLE_PAIRS  {11U};
 
 // Scheduling //////////////////////////////////////////////////////////////////
 

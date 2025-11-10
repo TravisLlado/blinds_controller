@@ -69,7 +69,8 @@ void Blinds::motorMove(const bool close) const {
         while ((position < motion_length) && (micros() < timestamp_timeout) && (close ? !blindsAreClosed() : true)) {
             increment = ((increment + increment_increment) > increment_max) ? (increment_max) : (increment + increment_increment);
             position += increment;
-            motorPosition((close ? -position : position), MOTOR_AMPLITUDE_MAX);
+            const float velocity_scaled_amplitude{(MOTOR_AMPLITUDE_MIN + (MOTOR_AMPLITUDE_MAX - MOTOR_AMPLITUDE_MIN) * (increment / increment_max))};
+            motorPosition((close ? -position : position), velocity_scaled_amplitude);
             
             while(micros() < end_tick) {}
             end_tick += tick_period;

@@ -35,8 +35,9 @@ private:
     const uint32_t TICK_FREQ              {5000U};  // Hz
     const float    SLOW_APPROACH_DISTANCE {10.0F};  // motor turns from expected stop
     const float    SLOW_APPROACH_SPEED    {0.25F};  // factor of max speed
-    const float    RAMP_RATE              {200.0F}; // RPM/sec
-    const float    MOTOR_AMPLITUDE_MAX    {0.9F};
+    const float    RAMP_RATE              {600.0F}; // RPM/sec
+    const float    MOTOR_AMPLITUDE_MAX    {0.8F};
+    const float    MOTOR_AMPLITUDE_MIN    {0.2F};
 
     const uint32_t duty_max{(1U << PWM_RESOLUTION) - 1U};
     const float increment_max{motor_speed_max / 60.0F / TICK_FREQ};
