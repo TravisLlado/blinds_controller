@@ -4,11 +4,11 @@
 #include "timesync.h"
 
 #define SCHEDULING true
-#define AUTO_OPEN  false
+#define AUTO_OPEN  true
 
 // RS485 ///////////////////////////////////////////////////////////////////////
 
-const uint8_t NUM_SLAVES  {2};
+const uint8_t NUM_SLAVES  {3};
 const uint8_t RX_TIMEOUT  {200};  // ms
 
 #ifndef SLAVE_ADDRESS
@@ -19,17 +19,25 @@ constexpr uint32_t RS485_DE_RE  {1};
 constexpr uint32_t RS485_RX     {2};
 constexpr uint32_t RS485_TX     {0};
 
-constexpr uint8_t CMD_QUERY     {0x01};
-constexpr uint8_t CMD_OPEN      {0x02};
-constexpr uint8_t CMD_CLOSE     {0x03};
-constexpr uint8_t RSP_STATE     {0x80};
-constexpr uint8_t RSP_COMPLETE  {0x81};
-constexpr uint8_t START_BYTE    {0xAA};
-constexpr uint8_t END_BYTE      {0x55};
+constexpr uint8_t CMD_QUERY       {0x01};
+constexpr uint8_t CMD_OPEN        {0x02};
+constexpr uint8_t CMD_CLOSE       {0x03};
+constexpr uint8_t CMD_SET_CONFIG  {0x04};  // New command for configuration
+constexpr uint8_t RSP_STATE       {0x80};
+constexpr uint8_t RSP_COMPLETE    {0x81};
+constexpr uint8_t RSP_CONFIG_ACK  {0x82};  // New response for config acknowledgment
+constexpr uint8_t START_BYTE      {0xAA};
+constexpr uint8_t END_BYTE        {0x55};
+
+// Configuration packet structure
+struct ConfigPacket {
+    float motion_length;
+    float motor_speed_max;
+};
 
 // Blinds Behavior /////////////////////////////////////////////////////////////
-constexpr float MOTION_LENGTH    {12.6F * 30.0F}; // motor turns
-constexpr float MOTOR_SPEED_MAX  {1200.0F}; // motor RPM
+constexpr float MOTION_LENGTH    {12.6F * 30.0F}; // motor turns, used to be 12.6
+constexpr float MOTOR_SPEED_MAX  {600.0F}; // motor RPM, 1200 works great
 constexpr float MOTION_TIMEOUT   {60.0F * MOTION_LENGTH / MOTOR_SPEED_MAX * 1.5F}; // sec
 
 // Blinds Hardware /////////////////////////////////////////////////////////////

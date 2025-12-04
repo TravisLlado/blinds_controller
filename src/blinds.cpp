@@ -10,7 +10,8 @@ Blinds::Blinds(uint32_t pin_a, uint32_t pin_b, uint32_t pin_c, uint32_t pin_enab
       pin_enable(pin_enable), pin_limit(pin_limit),
       num_pole_pairs(num_pole_pairs), motion_length(motion_length),
       motion_timeout(motion_timeout),
-      motor_speed_max(motor_speed_max) {
+      motor_speed_max(motor_speed_max),
+      increment_max(motor_speed_max / 60.0F / TICK_FREQ) {
     Serial.println("Blinds constructor started");
     
     pinMode(pin_enable, OUTPUT);
@@ -48,7 +49,36 @@ void Blinds::toggle() const {
     }
 }
 
+void Blinds::setMotorSpeedMax(float speed_max) {
+    motor_speed_max = speed_max;
+    recalculateIncrementMax();
+    recalculateTimeout();
+    Serial.print("Motor speed max updated to: ");
+    Serial.println(motor_speed_max);
+}
+
+void Blinds::setMotionLength(float length) {
+    motion_length = length;
+    recalculateTimeout();
+    Serial.print("Motion length updated to: ");
+    Serial.println(motion_length);
+}
+
 // Private /////////////////////////////////////////////////////////////////////
+
+void Blinds::recalculateIncrementMax() {
+    increment_max = motor_speed_max / 60.0F / TICK_FREQ;
+}
+
+void Blinds::recalculateTimeout() {
+    // Calculate timeout based on motion parameters
+    // Time = (motion_length turns) / (motor_speed_max RPM / 60 sec/min)
+    // Add 10% safety margin
+    motion_timeout = (motion_length / (motor_speed_max / 60.0F)) * 1.1F;
+    Serial.print("Motion timeout recalculated to: ");
+    Serial.print(motion_timeout);
+    Serial.println(" seconds");
+}
 
 void Blinds::motorMove(const bool close) const {    
     if (!close || !blindsAreClosed()) {

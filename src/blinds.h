@@ -15,6 +15,15 @@ public:
     void close() const;
     void open() const;
     void toggle() const;
+    
+    // Mutators for configurable parameters
+    void setMotorSpeedMax(float speed_max);
+    void setMotionLength(float length);
+    
+    // Getters (optional, for verification)
+    float getMotorSpeedMax() const { return motor_speed_max; }
+    float getMotionLength() const { return motion_length; }
+    float getMotionTimeout() const { return motion_timeout; }
 
 private:
     const uint32_t pin_motor_phase_a;
@@ -23,9 +32,9 @@ private:
     const uint32_t pin_enable;
     const uint32_t pin_limit;
     const uint32_t num_pole_pairs;
-    const float    motor_speed_max;
-    const float    motion_length;  // motor turns
-    const float    motion_timeout; // ms
+    float          motor_speed_max;  // Changed from const
+    float          motion_length;    // Changed from const
+    float          motion_timeout;   // Changed from const
 
     const uint32_t PWM_FREQUENCY          {20000U}; // hz
     const uint32_t PWM_RESOLUTION         {10U};    // bits
@@ -40,13 +49,15 @@ private:
     const float    MOTOR_AMPLITUDE_MIN    {0.2F};
 
     const uint32_t duty_max{(1U << PWM_RESOLUTION) - 1U};
-    const float increment_max{motor_speed_max / 60.0F / TICK_FREQ};
+    mutable float increment_max;           // Changed from const, made mutable
     const float increment_increment{RAMP_RATE / 60.0F / TICK_FREQ / TICK_FREQ};
 
     void motorMove(const bool close) const;
     void motorDisable() const;
     void motorEnable() const;
     void motorPosition(float electricalAngle, float amplitude) const;
+    void recalculateIncrementMax();  // Helper to recalculate derived values
+    void recalculateTimeout();       // Helper to recalculate timeout based on motion params
 };
 
 // End of file /////////////////////////////////////////////////////////////////

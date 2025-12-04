@@ -12,21 +12,21 @@
 
 enum SystemState {
   IDLE,
-  QUERYING,
-  MOVING_SLAVE_1,
-  MOVING_SLAVE_2,
-  MOVING_SLAVE_3
+  MOVING_BLINDS
 };
+
+uint8_t currentSlaveIndex = 0;  // Track which slave we're currently moving
 
 // Function prototypes
 void buttonAction();
 void startOperation();
 void startScheduledOperation(bool openBlinds);
 void querySlaves();
+void configureSlaves();
+bool sendConfig(uint8_t slave, const ConfigPacket& config);
 bool waitForResponse(uint8_t slave, uint8_t expectedCmd, uint8_t &data);
 void sendCommand(uint8_t slave, uint8_t cmd);
 void processIncoming();
-void startNextSlave();
 void updateAllTimes();
 void printTimes();
 void formatTimeOfDay(uint32_t timeOfDay, char* buffer);
@@ -88,6 +88,10 @@ void setup() {
   
   delay(1000);
   
+  // Configure all slaves with parameters from config.h
+  Serial.println("Configuring slaves...");
+  configureSlaves();
+  
   // Initial slave query
   querySlaves();
   
@@ -142,48 +146,101 @@ void loop() {
   // Process incoming RS485 messages
   processIncoming();
   
-  // Timeout check - per slave, not entire operation
+  // Timeout check - for current slave
   if (systemState != IDLE) {
     if ((millis() - currentSlaveStart) > (MOTION_TIMEOUT * 1000U + 1000U)) {
-      Serial.printf("Master: Slave %d timeout - aborting entire operation\n", 
-                    (systemState == MOVING_SLAVE_1) ? 1 : 
-                    (systemState == MOVING_SLAVE_2) ? 2 : 3);
+      Serial.printf("Master: Slave %d timeout - aborting operation\r\n", currentSlaveIndex + 1);
       systemState = IDLE;
+      currentSlaveIndex = 0;
     }
   }
   
   delay(TICK_PERIOD);
 }
 
+void configureSlaves() {
+  ConfigPacket config;
+  config.motion_length = MOTION_LENGTH;
+  config.motor_speed_max = MOTOR_SPEED_MAX;
+  
+  Serial.println("Sending configuration to all slaves:");
+  Serial.printf("  Motion Length: %.2f turns\r\n", config.motion_length);
+  Serial.printf("  Motor Speed Max: %.2f RPM\r\n", config.motor_speed_max);
+  
+  for (int i = 0; i < NUM_SLAVES; i++) {
+    uint8_t slave = i + 1;
+    if (sendConfig(slave, config)) {
+      Serial.printf("  Slave %d: Config OK\r\n", slave);
+    } else {
+      Serial.printf("  Slave %d: Config FAILED\r\n", slave);
+    }
+    delay(100);  // Small delay between slaves
+  }
+}
+
+bool sendConfig(uint8_t slave, const ConfigPacket& config) {
+  digitalWrite(RS485_DE_RE, HIGH);
+  delayMicroseconds(10);
+  
+  // Pack floats into bytes (4 bytes each)
+  uint8_t buffer[13];  // START + ADDR + CMD + 8 bytes data + CHECKSUM + END
+  buffer[0] = START_BYTE;
+  buffer[1] = slave;
+  buffer[2] = CMD_SET_CONFIG;
+  
+  // Copy motion_length (4 bytes)
+  memcpy(&buffer[3], &config.motion_length, sizeof(float));
+  
+  // Copy motor_speed_max (4 bytes)
+  memcpy(&buffer[7], &config.motor_speed_max, sizeof(float));
+  
+  // Calculate checksum over all data bytes
+  uint8_t checksum = START_BYTE ^ slave ^ CMD_SET_CONFIG;
+  for (int i = 3; i < 11; i++) {
+    checksum ^= buffer[i];
+  }
+  buffer[11] = checksum;
+  buffer[12] = END_BYTE;
+  
+  // Send the packet
+  rs485.write(buffer, 13);
+  rs485.flush();
+  delayMicroseconds(10);
+  digitalWrite(RS485_DE_RE, LOW);
+  
+  // Wait for acknowledgment
+  uint8_t dummy;
+  return waitForResponse(slave, RSP_CONFIG_ACK, dummy);
+}
+
 // Manual button operation - toggles all blinds to synchronized state
 void startOperation() {
   querySlaves();
   
-  // Check if all are in same state
-  bool allOpen = true;
+  // Simple logic: if all closed, open them. Otherwise, close them.
   bool allClosed = true;
   for (int i = 0; i < NUM_SLAVES; i++) {
-    if (!slaveStates[i]) allOpen = false;
-    if (slaveStates[i]) allClosed = false;
+    if (slaveStates[i]) {
+      allClosed = false;
+      break;
+    }
   }
   
-  // Decide action
-  if (allOpen) {
-    Serial.println("Master: All open - will close all");
-    targetOpen = false;
-  } else if (allClosed) {
-    Serial.println("Master: All closed - will open all");
+  if (allClosed) {
+    Serial.println("Master: All closed - opening all");
     targetOpen = true;
   } else {
-    Serial.println("Master: Mixed states - will close all for sync");
+    Serial.println("Master: At least one open - closing all");
     targetOpen = false;
   }
   
-  // Start with slave 1
+  // Start with first slave
+  currentSlaveIndex = 0;
+  systemState = MOVING_BLINDS;
   currentSlaveStart = millis();
-  sendCommand(1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-  systemState = MOVING_SLAVE_1;
-  Serial.println("Master: Moving slave 1");
+  
+  sendCommand(currentSlaveIndex + 1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
+  Serial.printf("Master: Moving slave %d\r\n", currentSlaveIndex + 1);
 }
 
 // Scheduled operation - opens or closes all blinds to specified state
@@ -206,21 +263,23 @@ void startScheduledOperation(bool openBlinds) {
   }
   
   if (allInTargetState) {
-    Serial.printf("Master: All blinds already %s - no action needed\n", 
+    Serial.printf("Master: All blinds already %s - no action needed\r\n", 
                   openBlinds ? "open" : "closed");
     return;
   }
   
-  Serial.printf("Master: Scheduled operation - %s all blinds\n", 
+  Serial.printf("Master: Scheduled operation - %s all blinds\r\n", 
                 openBlinds ? "opening" : "closing");
   
   targetOpen = openBlinds;
   
-  // Start with slave 1
+  // Start with first slave
+  currentSlaveIndex = 0;
+  systemState = MOVING_BLINDS;
   currentSlaveStart = millis();
-  sendCommand(1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-  systemState = MOVING_SLAVE_1;
-  Serial.println("Master: Moving slave 1");
+  
+  sendCommand(currentSlaveIndex + 1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
+  Serial.printf("Master: Moving slave %d\r\n", currentSlaveIndex + 1);
 }
 
 void querySlaves() {
@@ -233,9 +292,9 @@ void querySlaves() {
     uint8_t data;
     if (waitForResponse(slave, RSP_STATE, data)) {
       slaveStates[i] = (data == 1);
-      Serial.printf("  Slave %d: %s\n", slave, (slaveStates[i] ? "OPEN" : "CLOSED"));
+      Serial.printf("  Slave %d: %s\r\n", slave, (slaveStates[i] ? "OPEN" : "CLOSED"));
     } else {
-      Serial.printf("  Slave %d: No response\n", slave);
+      Serial.printf("  Slave %d: No response\r\n", slave);
     }
   }
 }
@@ -262,48 +321,33 @@ void processIncoming() {
         uint8_t expected = START_BYTE ^ slave ^ cmd ^ data;
         
         if (checksum == expected && cmd == RSP_COMPLETE) {
-          Serial.printf("Master: Slave %d movement complete\n", slave);
+          Serial.printf("Master: Slave %d movement complete\r\n", slave);
           
           // Update state
           if (slave >= 1 && slave <= NUM_SLAVES) {
             slaveStates[slave-1] = (data == 1);
           }
           
-          // Handle state machine
-          if (((systemState == MOVING_SLAVE_1) && (slave == 1)) ||
-              ((systemState == MOVING_SLAVE_2) && (slave == 2)) ||
-              ((systemState == MOVING_SLAVE_3) && (slave == 3))) {
-            startNextSlave();
+          // If we're in moving state and this is the slave we're waiting for
+          if (systemState == MOVING_BLINDS && slave == (currentSlaveIndex + 1)) {
+            // Move to next slave
+            currentSlaveIndex++;
+            
+            if (currentSlaveIndex >= NUM_SLAVES) {
+              // All done
+              Serial.println("Master: All operations complete");
+              systemState = IDLE;
+              currentSlaveIndex = 0;
+            } else {
+              // Start next slave
+              currentSlaveStart = millis();
+              sendCommand(currentSlaveIndex + 1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
+              Serial.printf("Master: Moving slave %d\r\n", currentSlaveIndex + 1);
+            }
           }
         }
       }
     }
-  }
-}
-
-void startNextSlave() {
-  switch (systemState) {
-    case MOVING_SLAVE_1:
-      currentSlaveStart = millis();  // Reset timer for slave 2
-      sendCommand(2, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-      systemState = MOVING_SLAVE_2;
-      Serial.println("Master: Moving slave 2");
-      break;
-      
-    case MOVING_SLAVE_2:
-      currentSlaveStart = millis();  // Reset timer for slave 3
-      sendCommand(3, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-      systemState = MOVING_SLAVE_3;
-      Serial.println("Master: Moving slave 3");
-      break;
-      
-    case MOVING_SLAVE_3:
-      Serial.println("Master: All operations complete");
-      systemState = IDLE;
-      break;
-      
-    default:
-      break;
   }
 }
 

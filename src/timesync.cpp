@@ -50,10 +50,10 @@ bool TimeSync::connectToWiFi() {
   }
   
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nConnected to WiFi");
+    Serial.println("\r\nConnected to WiFi");
     return true;
   } else {
-    Serial.println("\nFailed to connect to WiFi");
+    Serial.println("\r\nFailed to connect to WiFi");
     return false;
   }
 }

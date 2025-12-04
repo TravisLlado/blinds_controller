@@ -16,6 +16,7 @@
 void buttonAction();
 void sendPacket(const uint8_t cmd, const uint8_t data);
 void executeCommand(const uint8_t cmd);
+void handleConfigCommand(const uint8_t* buffer);
 
 // Globals /////////////////////////////////////////////////////////////////////
 
@@ -28,9 +29,9 @@ Blinds blinds_g(
     PIN_ENABLE,
     PIN_LIMIT,
     NUM_POLE_PAIRS,
-    MOTION_LENGTH,
-    MOTION_TIMEOUT,
-    MOTOR_SPEED_MAX
+    MOTION_LENGTH,    // Default value, will be overwritten by master
+    MOTION_TIMEOUT,   // Default value, will be recalculated when config is received
+    MOTOR_SPEED_MAX   // Default value, will be overwritten by master
 );
 
 Button button_g(PIN_BTN, BUTTON_PRESS_LENGTH, Button::ACTIVE_LOW, buttonAction);
@@ -83,6 +84,25 @@ void executeCommand(const uint8_t cmd) {
   }
 }
 
+void handleConfigCommand(const uint8_t* buffer) {
+  // Extract floats from buffer (bytes 3-10)
+  ConfigPacket config;
+  memcpy(&config.motion_length, &buffer[3], sizeof(float));
+  memcpy(&config.motor_speed_max, &buffer[7], sizeof(float));
+  
+  // Apply configuration to blinds (timeout is automatically recalculated)
+  blinds_g.setMotionLength(config.motion_length);
+  blinds_g.setMotorSpeedMax(config.motor_speed_max);
+  
+  Serial.printf("Slave %d: Config received\n", SLAVE_ADDRESS);
+  Serial.printf("  Motion Length: %.2f turns\n", config.motion_length);
+  Serial.printf("  Motor Speed Max: %.2f RPM\n", config.motor_speed_max);
+  Serial.printf("  Motion Timeout: %.1f seconds\n", blinds_g.getMotionTimeout());
+  
+  // Send acknowledgment
+  sendPacket(RSP_CONFIG_ACK, 1);
+}
+
 void sendPacket(const uint8_t cmd, const uint8_t data) {
   digitalWrite(RS485_DE_RE, HIGH);
   delayMicroseconds(10);
@@ -114,7 +134,7 @@ void setup() {
   
   rs485_g.begin(9600, SERIAL_8N1, RS485_RX, RS485_TX);
   
-  Serial.println("Ready.");
+  Serial.println("Ready. Waiting for configuration from master...");
 }
 
 // Loop ////////////////////////////////////////////////////////////////////////
@@ -123,8 +143,9 @@ void loop() {
   button_g.update();
   
   // Process RS485 incoming
-  static uint8_t rxBuffer[5];
+  static uint8_t rxBuffer[13];  // Maximum size for config packet
   static uint8_t rxIndex{0};
+  static uint8_t expectedLength{5};  // Default for standard commands
   
   while (rs485_g.available()) {
     const uint8_t b = rs485_g.read();
@@ -133,16 +154,47 @@ void loop() {
     
     rxBuffer[rxIndex++] = b;
     
-    if (rxIndex == 5) {
-      if ((rxBuffer[4] == END_BYTE) && (rxBuffer[1] == SLAVE_ADDRESS)) {
+    // After receiving address and command, determine expected packet length
+    if (rxIndex == 3) {
+      if (rxBuffer[2] == CMD_SET_CONFIG) {
+        expectedLength = 13;  // Config packets are longer
+      } else {
+        expectedLength = 5;   // Standard commands
+      }
+    }
+    
+    if (rxIndex == expectedLength) {
+      // Check if packet is for this slave
+      if (rxBuffer[1] == SLAVE_ADDRESS) {
         const uint8_t cmd{rxBuffer[2]};
-        const uint8_t checksum = START_BYTE ^ SLAVE_ADDRESS ^ cmd;
         
-        if (rxBuffer[3] == checksum) {
-          executeCommand(cmd);
+        if (cmd == CMD_SET_CONFIG) {
+          // Handle config packet (13 bytes total)
+          if (rxBuffer[12] == END_BYTE) {
+            // Verify checksum
+            uint8_t checksum = START_BYTE ^ SLAVE_ADDRESS ^ CMD_SET_CONFIG;
+            for (int i = 3; i < 11; i++) {
+              checksum ^= rxBuffer[i];
+            }
+            
+            if (rxBuffer[11] == checksum) {
+              handleConfigCommand(rxBuffer);
+            }
+          }
+        } else {
+          // Handle standard command (5 bytes total)
+          if (rxBuffer[4] == END_BYTE) {
+            const uint8_t checksum = START_BYTE ^ SLAVE_ADDRESS ^ cmd;
+            
+            if (rxBuffer[3] == checksum) {
+              executeCommand(cmd);
+            }
+          }
         }
       }
+      
       rxIndex = 0;
+      expectedLength = 5;  // Reset to default
     }
   }
   
