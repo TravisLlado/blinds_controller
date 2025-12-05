@@ -9,7 +9,7 @@ class Blinds {
 public:
     Blinds(uint32_t pin_a, uint32_t pin_b, uint32_t pin_c, uint32_t pin_enable,
         uint32_t pin_limit, uint32_t num_pole_pairs, float motion_length,
-        float motion_timeout, float motor_speed_max); 
+        float motion_timeout, float motor_speed_open, float motor_speed_close); 
     
     bool blindsAreClosed() const;
     void close() const;
@@ -17,11 +17,13 @@ public:
     void toggle() const;
     
     // Mutators for configurable parameters
-    void setMotorSpeedMax(float speed_max);
+    void setMotorSpeedOpen(float speed_open);
+    void setMotorSpeedClose(float speed_close);
     void setMotionLength(float length);
     
     // Getters (optional, for verification)
-    float getMotorSpeedMax() const { return motor_speed_max; }
+    float getMotorSpeedOpen() const { return motor_speed_open; }
+    float getMotorSpeedClose() const { return motor_speed_close; }
     float getMotionLength() const { return motion_length; }
     float getMotionTimeout() const { return motion_timeout; }
 
@@ -32,9 +34,10 @@ private:
     const uint32_t pin_enable;
     const uint32_t pin_limit;
     const uint32_t num_pole_pairs;
-    float          motor_speed_max;  // Changed from const
-    float          motion_length;    // Changed from const
-    float          motion_timeout;   // Changed from const
+    float          motor_speed_open;   // RPM when opening
+    float          motor_speed_close;  // RPM when closing
+    float          motion_length;
+    float          motion_timeout;
 
     const uint32_t PWM_FREQUENCY          {20000U}; // hz
     const uint32_t PWM_RESOLUTION         {10U};    // bits
@@ -49,15 +52,16 @@ private:
     const float    MOTOR_AMPLITUDE_MIN    {0.2F};
 
     const uint32_t duty_max{(1U << PWM_RESOLUTION) - 1U};
-    mutable float increment_max;           // Changed from const, made mutable
+    mutable float increment_max_open;    // Maximum increment for opening
+    mutable float increment_max_close;   // Maximum increment for closing
     const float increment_increment{RAMP_RATE / 60.0F / TICK_FREQ / TICK_FREQ};
 
     void motorMove(const bool close) const;
     void motorDisable() const;
     void motorEnable() const;
     void motorPosition(float electricalAngle, float amplitude) const;
-    void recalculateIncrementMax();  // Helper to recalculate derived values
-    void recalculateTimeout();       // Helper to recalculate timeout based on motion params
+    void recalculateIncrementMax();  // Recalculate derived values for both speeds
+    void recalculateTimeout();       // Recalculate timeout based on motion params
 };
 
 // End of file /////////////////////////////////////////////////////////////////

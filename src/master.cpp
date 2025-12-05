@@ -39,6 +39,8 @@ void sunsetAction();
 HardwareSerial rs485(0);
 SystemState systemState = IDLE;
 bool slaveStates[NUM_SLAVES] = {false};  // false=closed, true=open
+bool slaveStateValid[NUM_SLAVES] = {false};  // Track if we have valid state data
+bool slaveConfigured[NUM_SLAVES] = {false};  // Track if slave was successfully configured
 bool targetOpen = false;  // What we're moving blinds to
 unsigned long currentSlaveStart = 0;  // Track start time for current slave
 unsigned long lastHeartbeat = 0;
@@ -76,7 +78,7 @@ void buttonAction() {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n\nRS485 Master with Scheduling");
+  Serial.println("\r\n\r\nRS485 Master with Scheduling");
   
   // Initialize button
   button.begin();
@@ -135,12 +137,25 @@ void loop() {
   // Heartbeat for system status
   if (millis() - lastHeartbeat >= 10000) {  // Every 10 seconds
     lastHeartbeat = millis();
-    Serial.printf("Master: State=%d Blinds=[", systemState);
+    
+    // Check if any slave has invalid state
+    bool allValid = true;
     for (int i = 0; i < NUM_SLAVES; i++) {
-      Serial.print(slaveStates[i] ? "OPEN" : "CLOSED");
-      if (i < (NUM_SLAVES - 1)) Serial.print(",");
+      if (!slaveStateValid[i]) {
+        Serial.printf("Communication with slave %d failed\r\n", i + 1);
+        allValid = false;
+      }
     }
-    Serial.println("]");
+    
+    // Only print heartbeat if all slaves have valid state
+    if (allValid) {
+      Serial.printf("Master: State=%d Blinds=[", systemState);
+      for (int i = 0; i < NUM_SLAVES; i++) {
+        Serial.print(slaveStates[i] ? "OPEN" : "CLOSED");
+        if (i < (NUM_SLAVES - 1)) Serial.print(",");
+      }
+      Serial.println("]");
+    }
   }
   
   // Process incoming RS485 messages
@@ -161,20 +176,32 @@ void loop() {
 void configureSlaves() {
   ConfigPacket config;
   config.motion_length = MOTION_LENGTH;
-  config.motor_speed_max = MOTOR_SPEED_MAX;
+  config.motor_speed_open = MOTOR_SPEED_OPEN;
+  config.motor_speed_close = MOTOR_SPEED_CLOSE;
   
   Serial.println("Sending configuration to all slaves:");
   Serial.printf("  Motion Length: %.2f turns\r\n", config.motion_length);
-  Serial.printf("  Motor Speed Max: %.2f RPM\r\n", config.motor_speed_max);
+  Serial.printf("  Motor Speed (Open): %.2f RPM\r\n", config.motor_speed_open);
+  Serial.printf("  Motor Speed (Close): %.2f RPM\r\n", config.motor_speed_close);
+  
+  bool allConfigured = true;
   
   for (int i = 0; i < NUM_SLAVES; i++) {
     uint8_t slave = i + 1;
     if (sendConfig(slave, config)) {
       Serial.printf("  Slave %d: Config OK\r\n", slave);
+      slaveConfigured[i] = true;
     } else {
       Serial.printf("  Slave %d: Config FAILED\r\n", slave);
+      slaveConfigured[i] = false;
+      allConfigured = false;
     }
     delay(100);  // Small delay between slaves
+  }
+  
+  if (!allConfigured) {
+    Serial.println("\r\nWARNING: Not all slaves configured successfully!");
+    Serial.println("Master control is DISABLED. Fix slave issues before operation.");
   }
 }
 
@@ -182,8 +209,8 @@ bool sendConfig(uint8_t slave, const ConfigPacket& config) {
   digitalWrite(RS485_DE_RE, HIGH);
   delayMicroseconds(10);
   
-  // Pack floats into bytes (4 bytes each)
-  uint8_t buffer[13];  // START + ADDR + CMD + 8 bytes data + CHECKSUM + END
+  // Pack floats into bytes (4 bytes each, now 12 bytes total)
+  uint8_t buffer[17];  // START + ADDR + CMD + 12 bytes data + CHECKSUM + END
   buffer[0] = START_BYTE;
   buffer[1] = slave;
   buffer[2] = CMD_SET_CONFIG;
@@ -191,19 +218,22 @@ bool sendConfig(uint8_t slave, const ConfigPacket& config) {
   // Copy motion_length (4 bytes)
   memcpy(&buffer[3], &config.motion_length, sizeof(float));
   
-  // Copy motor_speed_max (4 bytes)
-  memcpy(&buffer[7], &config.motor_speed_max, sizeof(float));
+  // Copy motor_speed_open (4 bytes)
+  memcpy(&buffer[7], &config.motor_speed_open, sizeof(float));
+  
+  // Copy motor_speed_close (4 bytes)
+  memcpy(&buffer[11], &config.motor_speed_close, sizeof(float));
   
   // Calculate checksum over all data bytes
   uint8_t checksum = START_BYTE ^ slave ^ CMD_SET_CONFIG;
-  for (int i = 3; i < 11; i++) {
+  for (int i = 3; i < 15; i++) {
     checksum ^= buffer[i];
   }
-  buffer[11] = checksum;
-  buffer[12] = END_BYTE;
+  buffer[15] = checksum;
+  buffer[16] = END_BYTE;
   
   // Send the packet
-  rs485.write(buffer, 13);
+  rs485.write(buffer, 17);
   rs485.flush();
   delayMicroseconds(10);
   digitalWrite(RS485_DE_RE, LOW);
@@ -215,7 +245,23 @@ bool sendConfig(uint8_t slave, const ConfigPacket& config) {
 
 // Manual button operation - toggles all blinds to synchronized state
 void startOperation() {
+  // Check if all slaves are configured
+  for (int i = 0; i < NUM_SLAVES; i++) {
+    if (!slaveConfigured[i]) {
+      Serial.printf("Master: Cannot operate - Slave %d not configured\r\n", i + 1);
+      return;
+    }
+  }
+  
   querySlaves();
+  
+  // Check if we have valid state for all slaves
+  for (int i = 0; i < NUM_SLAVES; i++) {
+    if (!slaveStateValid[i]) {
+      Serial.printf("Master: Cannot operate - Slave %d state unknown\r\n", i + 1);
+      return;
+    }
+  }
   
   // Simple logic: if all closed, open them. Otherwise, close them.
   bool allClosed = true;
@@ -250,8 +296,24 @@ void startScheduledOperation(bool openBlinds) {
     return;
   }
   
+  // Check if all slaves are configured
+  for (int i = 0; i < NUM_SLAVES; i++) {
+    if (!slaveConfigured[i]) {
+      Serial.printf("Master: Cannot operate - Slave %d not configured\r\n", i + 1);
+      return;
+    }
+  }
+  
   // Query current states
   querySlaves();
+  
+  // Check if we have valid state for all slaves
+  for (int i = 0; i < NUM_SLAVES; i++) {
+    if (!slaveStateValid[i]) {
+      Serial.printf("Master: Cannot operate - Slave %d state unknown\r\n", i + 1);
+      return;
+    }
+  }
   
   // Check if we're already in the desired state
   bool allInTargetState = true;
@@ -292,8 +354,10 @@ void querySlaves() {
     uint8_t data;
     if (waitForResponse(slave, RSP_STATE, data)) {
       slaveStates[i] = (data == 1);
+      slaveStateValid[i] = true;
       Serial.printf("  Slave %d: %s\r\n", slave, (slaveStates[i] ? "OPEN" : "CLOSED"));
     } else {
+      slaveStateValid[i] = false;
       Serial.printf("  Slave %d: No response\r\n", slave);
     }
   }
@@ -326,6 +390,7 @@ void processIncoming() {
           // Update state
           if (slave >= 1 && slave <= NUM_SLAVES) {
             slaveStates[slave-1] = (data == 1);
+            slaveStateValid[slave-1] = true;
           }
           
           // If we're in moving state and this is the slave we're waiting for
