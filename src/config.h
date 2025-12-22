@@ -38,8 +38,8 @@ struct ConfigPacket {
 
 // Blinds Behavior /////////////////////////////////////////////////////////////
 constexpr float MOTION_LENGTH      {12.6F * 30.0F}; // motor turns
-constexpr float MOTOR_SPEED_OPEN   {600.0F};  // Spool RPM
-constexpr float MOTOR_SPEED_CLOSE  {1200.0F}; // Spool RPM
+constexpr float MOTOR_SPEED_OPEN   {450.0F};  // Spool RPM
+constexpr float MOTOR_SPEED_CLOSE  {600.0F}; // Spool RPM
 constexpr float MOTION_TIMEOUT     {60.0F * MOTION_LENGTH / MOTOR_SPEED_OPEN * 1.5F}; // sec (conservative, based on slower open speed)
 
 // Blinds Hardware /////////////////////////////////////////////////////////////
