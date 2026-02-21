@@ -1,4 +1,7 @@
 build/
+.cache/
+compile_commands.json
+.vscode/c_cpp_properties.json
 .DS_Store
 keys.py
 *.crt

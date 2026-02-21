@@ -22,7 +22,6 @@ void buttonAction();
 void startOperation();
 void startScheduledOperation(bool openBlinds);
 void querySlaves();
-void configureSlaves();
 bool sendConfig(uint8_t slave, const ConfigPacket& config);
 bool waitForResponse(uint8_t slave, uint8_t expectedCmd, uint8_t &data);
 void sendCommand(uint8_t slave, uint8_t cmd);
@@ -40,7 +39,6 @@ HardwareSerial rs485(0);
 SystemState systemState = IDLE;
 bool slaveStates[NUM_SLAVES] = {false};  // false=closed, true=open
 bool slaveStateValid[NUM_SLAVES] = {false};  // Track if we have valid state data
-bool slaveConfigured[NUM_SLAVES] = {false};  // Track if slave was successfully configured
 bool targetOpen = false;  // What we're moving blinds to
 unsigned long currentSlaveStart = 0;  // Track start time for current slave
 unsigned long lastHeartbeat = 0;
@@ -66,6 +64,13 @@ uint8_t failedUpdateAttempts{0U}; // Count failed update attempts
 uint32_t lastUpdateAttempt{0};    // Track when we last attempted an update
 uint32_t lastPrintTime{0};
 
+// Single config for all slaves (from config.h; never changes at runtime)
+static const ConfigPacket kSlaveConfig = {
+  MOTION_LENGTH,
+  MOTOR_SPEED_OPEN,
+  MOTOR_SPEED_CLOSE
+};
+
 // Button callback - manual override
 void buttonAction() {
   if (systemState == IDLE) {
@@ -89,10 +94,6 @@ void setup() {
   rs485.begin(9600, SERIAL_8N1, RS485_RX, RS485_TX);
   
   delay(1000);
-  
-  // Configure all slaves with parameters from config.h
-  Serial.println("Configuring slaves...");
-  configureSlaves();
   
   // Initial slave query
   querySlaves();
@@ -173,38 +174,6 @@ void loop() {
   delay(TICK_PERIOD);
 }
 
-void configureSlaves() {
-  ConfigPacket config;
-  config.motion_length = MOTION_LENGTH;
-  config.motor_speed_open = MOTOR_SPEED_OPEN;
-  config.motor_speed_close = MOTOR_SPEED_CLOSE;
-  
-  Serial.println("Sending configuration to all slaves:");
-  Serial.printf("  Motion Length: %.2f turns\r\n", config.motion_length);
-  Serial.printf("  Motor Speed (Open): %.2f RPM\r\n", config.motor_speed_open);
-  Serial.printf("  Motor Speed (Close): %.2f RPM\r\n", config.motor_speed_close);
-  
-  bool allConfigured = true;
-  
-  for (int i = 0; i < NUM_SLAVES; i++) {
-    uint8_t slave = i + 1;
-    if (sendConfig(slave, config)) {
-      Serial.printf("  Slave %d: Config OK\r\n", slave);
-      slaveConfigured[i] = true;
-    } else {
-      Serial.printf("  Slave %d: Config FAILED\r\n", slave);
-      slaveConfigured[i] = false;
-      allConfigured = false;
-    }
-    delay(100);  // Small delay between slaves
-  }
-  
-  if (!allConfigured) {
-    Serial.println("\r\nWARNING: Not all slaves configured successfully!");
-    Serial.println("Master control is DISABLED. Fix slave issues before operation.");
-  }
-}
-
 bool sendConfig(uint8_t slave, const ConfigPacket& config) {
   digitalWrite(RS485_DE_RE, HIGH);
   delayMicroseconds(10);
@@ -245,14 +214,6 @@ bool sendConfig(uint8_t slave, const ConfigPacket& config) {
 
 // Manual button operation - toggles all blinds to synchronized state
 void startOperation() {
-  // Check if all slaves are configured
-  for (int i = 0; i < NUM_SLAVES; i++) {
-    if (!slaveConfigured[i]) {
-      Serial.printf("Master: Cannot operate - Slave %d not configured\r\n", i + 1);
-      return;
-    }
-  }
-  
   querySlaves();
   
   // Check if we have valid state for all slaves
@@ -285,6 +246,7 @@ void startOperation() {
   systemState = MOVING_BLINDS;
   currentSlaveStart = millis();
   
+  sendConfig(currentSlaveIndex + 1, kSlaveConfig);
   sendCommand(currentSlaveIndex + 1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
   Serial.printf("Master: Moving slave %d\r\n", currentSlaveIndex + 1);
 }
@@ -294,14 +256,6 @@ void startScheduledOperation(bool openBlinds) {
   if (systemState != IDLE) {
     Serial.println("Master: Cannot start scheduled operation - system busy");
     return;
-  }
-  
-  // Check if all slaves are configured
-  for (int i = 0; i < NUM_SLAVES; i++) {
-    if (!slaveConfigured[i]) {
-      Serial.printf("Master: Cannot operate - Slave %d not configured\r\n", i + 1);
-      return;
-    }
   }
   
   // Query current states
@@ -340,6 +294,7 @@ void startScheduledOperation(bool openBlinds) {
   systemState = MOVING_BLINDS;
   currentSlaveStart = millis();
   
+  sendConfig(currentSlaveIndex + 1, kSlaveConfig);
   sendCommand(currentSlaveIndex + 1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
   Serial.printf("Master: Moving slave %d\r\n", currentSlaveIndex + 1);
 }
@@ -404,8 +359,9 @@ void processIncoming() {
               systemState = IDLE;
               currentSlaveIndex = 0;
             } else {
-              // Start next slave
+              // Start next slave (config sent before each motion so slaves keep correct params after brownouts)
               currentSlaveStart = millis();
+              sendConfig(currentSlaveIndex + 1, kSlaveConfig);
               sendCommand(currentSlaveIndex + 1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
               Serial.printf("Master: Moving slave %d\r\n", currentSlaveIndex + 1);
             }
@@ -450,15 +406,15 @@ bool waitForResponse(uint8_t slave, uint8_t expectedCmd, uint8_t &data) {
 void sendCommand(uint8_t slave, uint8_t cmd) {
   digitalWrite(RS485_DE_RE, HIGH);
   delayMicroseconds(10);
-  
+
   uint8_t checksum = START_BYTE ^ slave ^ cmd;
-  
+
   rs485.write(START_BYTE);
   rs485.write(slave);
   rs485.write(cmd);
   rs485.write(checksum);
   rs485.write(END_BYTE);
-  
+
   rs485.flush();
   delayMicroseconds(10);
   digitalWrite(RS485_DE_RE, LOW);
