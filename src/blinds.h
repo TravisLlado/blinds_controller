@@ -14,6 +14,7 @@ public:
     bool blindsAreClosed() const;
     void close() const;
     void open() const;
+    void closeHalfway() const;  // Close by half of full travel; stops at limit if hit sooner
     void toggle() const;
     
     // Mutators for configurable parameters
@@ -56,7 +57,7 @@ private:
     mutable float increment_max_close;   // Maximum increment for closing
     const float increment_increment{RAMP_RATE / 60.0F / TICK_FREQ / TICK_FREQ};
 
-    void motorMove(const bool close) const;
+    void motorMove(const bool close, float max_distance = -1.0F) const;  // max_distance < 0 means use motion_length
     void motorDisable() const;
     void motorEnable() const;
     void motorPosition(float electricalAngle, float amplitude) const;

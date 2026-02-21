@@ -4,11 +4,15 @@
 
 // Constructor /////////////////////////////////////////////////////////////////
 
-Button::Button(uint8_t pin, uint32_t holdTimeMs, PinLogic logic, ButtonCallback callback)
+Button::Button(uint8_t pin, uint32_t debounceMs, uint32_t shortPressMaxMs, uint32_t longPressMinMs,
+               PinLogic logic, ButtonCallback shortCallback, ButtonCallback longCallback)
     : button_pin(pin),
-      hold_time_us(holdTimeMs * 1000U),
+      debounce_ms(debounceMs),
+      short_press_max_ms(shortPressMaxMs),
+      long_press_min_ms(longPressMinMs),
       pin_logic(logic),
-      action_callback(callback) {
+      short_callback(shortCallback),
+      long_callback(longCallback) {
 }
 
 // Public Methods //////////////////////////////////////////////////////////////
@@ -24,8 +28,8 @@ void Button::begin() {
     // Initialize state
     current_state = readPin();
     last_state = current_state;
-    press_handled = false;
     press_start_time = 0;
+    long_press_fired = false;
     press_edge = false;
     release_edge = false;
 }
@@ -38,24 +42,39 @@ void Button::update() {
     // Update edge detection flags
     updateEdgeFlags();
     
-    // Handle button press logic
+    const uint32_t now = millis();
+    
     if (current_state) {
         // Button is currently pressed
         if (press_edge) {
             // New press started
-            press_start_time = micros();
-            press_handled = false;
+            press_start_time = now;
+            long_press_fired = false;
         }
         
-        // Check if button has been held long enough and not yet handled
-        if (!press_handled && (micros() - press_start_time) >= hold_time_us) {
-            if (action_callback) {
-                action_callback();
+        const uint32_t hold_ms = now - press_start_time;
+        
+        // Long press: fire immediately when threshold is reached
+        if (!long_press_fired && hold_ms >= long_press_min_ms) {
+            if (long_callback) {
+                long_callback();
             }
-            press_handled = true;
+            long_press_fired = true;
+        }
+    } else {
+        // Button was just released
+        if (release_edge && press_start_time != 0) {
+            const uint32_t hold_ms = now - press_start_time;
+            // Short press: released within window (debounce < hold <= short max) and long wasn't fired
+            if (!long_press_fired &&
+                hold_ms >= debounce_ms &&
+                hold_ms <= short_press_max_ms &&
+                short_callback) {
+                short_callback();
+            }
+            press_start_time = 0;
         }
     }
-    // Note: Release handling could be added here if needed
 }
 
 bool Button::isPressed() const {
@@ -72,7 +91,7 @@ bool Button::wasReleased() const {
 
 uint32_t Button::getPressTime() const {
     if (current_state && press_start_time > 0) {
-        return (micros() - press_start_time) / 1000U; // Convert to ms
+        return millis() - press_start_time;
     }
     return 0;
 }

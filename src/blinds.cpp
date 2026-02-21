@@ -43,6 +43,10 @@ void Blinds::open() const {
     motorMove(false);
 }
 
+void Blinds::closeHalfway() const {
+    motorMove(true, motion_length * 0.5F);
+}
+
 void Blinds::toggle() const {
     if (blindsAreClosed()) {
         open();
@@ -92,7 +96,8 @@ void Blinds::recalculateTimeout() {
     Serial.println(" seconds");
 }
 
-void Blinds::motorMove(const bool close) const {    
+void Blinds::motorMove(const bool close, float max_distance) const {
+    const float target = (max_distance >= 0.0F) ? max_distance : motion_length;
     if (!close || !blindsAreClosed()) {
         Serial.println(close ? "Closing blinds ..." : "Opening blinds ...");
         
@@ -111,7 +116,7 @@ void Blinds::motorMove(const bool close) const {
         const uint32_t tick_period{1000000U / TICK_FREQ};
         uint32_t end_tick{micros() + tick_period};
 
-        while ((position < motion_length) && (micros() < timestamp_timeout) && (close ? !blindsAreClosed() : true)) {
+        while ((position < target) && (micros() < timestamp_timeout) && (close ? !blindsAreClosed() : true)) {
             increment = ((increment + increment_increment) > increment_max) ? (increment_max) : (increment + increment_increment);
             position += increment;
             const float velocity_scaled_amplitude{(MOTOR_AMPLITUDE_MIN + (MOTOR_AMPLITUDE_MAX - MOTOR_AMPLITUDE_MIN) * (increment / increment_max))};

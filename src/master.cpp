@@ -19,6 +19,7 @@ uint8_t currentSlaveIndex = 0;  // Track which slave we're currently moving
 
 // Function prototypes
 void buttonAction();
+void buttonLongPressAction();
 void startOperation();
 void startScheduledOperation(bool openBlinds);
 void querySlaves();
@@ -43,8 +44,9 @@ bool targetOpen = false;  // What we're moving blinds to
 unsigned long currentSlaveStart = 0;  // Track start time for current slave
 unsigned long lastHeartbeat = 0;
 
-// Button instance
-Button button(PIN_BTN, BUTTON_PRESS_LENGTH, Button::ACTIVE_LOW, buttonAction);
+// Button instance (short press = toggle all; long press = close third window halfway)
+Button button(PIN_BTN, BUTTON_DEBOUNCE_MS, BUTTON_SHORT_PRESS_MS, BUTTON_LONG_PRESS_MS,
+              Button::ACTIVE_LOW, buttonAction, buttonLongPressAction);
 
 // Time synchronization
 TimeSync timeSync(WIFI_SSID, WIFI_PASSWORD, LATITUDE, LONGITUDE, TIMEZONE_OFFSET);
@@ -71,7 +73,7 @@ static const ConfigPacket kSlaveConfig = {
   MOTOR_SPEED_CLOSE
 };
 
-// Button callback - manual override
+// Button callback - short press: toggle all blinds
 void buttonAction() {
   if (systemState == IDLE) {
     Serial.println("Master: Manual button pressed");
@@ -79,6 +81,18 @@ void buttonAction() {
   } else {
     Serial.println("Master: Button pressed but system busy - ignoring");
   }
+}
+
+// Button callback - long press: close third window halfway only
+void buttonLongPressAction() {
+  if (systemState != IDLE) {
+    Serial.println("Master: Long press ignored - system busy");
+    return;
+  }
+  const uint8_t thirdSlave = 3;
+  Serial.println("Master: Long press - close slave 3 halfway");
+  sendConfig(thirdSlave, kSlaveConfig);
+  sendCommand(thirdSlave, CMD_CLOSE_HALF);
 }
 
 void setup() {

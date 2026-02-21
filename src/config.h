@@ -23,6 +23,7 @@ constexpr uint8_t CMD_QUERY       {0x01};
 constexpr uint8_t CMD_OPEN        {0x02};
 constexpr uint8_t CMD_CLOSE       {0x03};
 constexpr uint8_t CMD_SET_CONFIG  {0x04};
+constexpr uint8_t CMD_CLOSE_HALF  {0x05};
 constexpr uint8_t RSP_STATE       {0x80};
 constexpr uint8_t RSP_COMPLETE    {0x81};
 constexpr uint8_t RSP_CONFIG_ACK  {0x82};
@@ -77,6 +78,8 @@ constexpr uint32_t TICK_PERIOD {10U}; // ms
 // Button //////////////////////////////////////////////////////////////////////
 
 constexpr uint32_t PIN_BTN {9U};
-constexpr uint32_t BUTTON_PRESS_LENGTH {150U};  // ms
+constexpr uint32_t BUTTON_DEBOUNCE_MS    {100U};  // min hold to count as valid press
+constexpr uint32_t BUTTON_SHORT_PRESS_MS {500U};  // short = release between debounce and this
+constexpr uint32_t BUTTON_LONG_PRESS_MS  {1000U}; // long = hold this long (callback fires immediately)
 
 // End of file /////////////////////////////////////////////////////////////////

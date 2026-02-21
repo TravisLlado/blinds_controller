@@ -35,7 +35,8 @@ Blinds blinds_g(
     MOTOR_SPEED_CLOSE    // Default value, will be overwritten by master
 );
 
-Button button_g(PIN_BTN, BUTTON_PRESS_LENGTH, Button::ACTIVE_LOW, buttonAction);
+Button button_g(PIN_BTN, BUTTON_DEBOUNCE_MS, BUTTON_SHORT_PRESS_MS, BUTTON_LONG_PRESS_MS,
+                Button::ACTIVE_LOW, buttonAction, nullptr);
 
 // Helpers /////////////////////////////////////////////////////////////////////
 
@@ -79,6 +80,20 @@ void executeCommand(const uint8_t cmd) {
           blinds_g.close();
           sendPacket(RSP_COMPLETE, 0);
           Serial.printf("Slave %d: Close complete\n", SLAVE_ADDRESS);
+        }
+      }
+      break;
+
+    case CMD_CLOSE_HALF:
+      {
+        if (blinds_are_closed) {
+          sendPacket(RSP_COMPLETE, 0);
+          Serial.printf("Slave %d: Already closed, skip close-half\n", SLAVE_ADDRESS);
+        } else {
+          Serial.printf("Slave %d: Close halfway...\n", SLAVE_ADDRESS);
+          blinds_g.closeHalfway();
+          sendPacket(RSP_COMPLETE, 0);
+          Serial.printf("Slave %d: Close-half complete\n", SLAVE_ADDRESS);
         }
       }
       break;

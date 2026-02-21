@@ -6,7 +6,7 @@
 // Function pointer type for button action
 typedef void (*ButtonCallback)();
 
-// Button class with debouncing and hold detection
+// Button class with debouncing and short/long press detection
 class Button {
 public:
     enum PinLogic {
@@ -14,7 +14,13 @@ public:
         ACTIVE_HIGH = 1   // Button pressed = HIGH
     };
     
-    Button(uint8_t pin, uint32_t holdTimeMs, PinLogic logic, ButtonCallback callback);
+    // debounceMs: minimum hold (ms) to count as a valid press
+    // shortPressMaxMs: short press = release between debounce and this (ms)
+    // longPressMinMs: long press = hold this long (ms); callback fires immediately
+    // shortCallback: called on release when press was in short window (may be nullptr)
+    // longCallback: called as soon as longPressMinMs is reached (may be nullptr)
+    Button(uint8_t pin, uint32_t debounceMs, uint32_t shortPressMaxMs, uint32_t longPressMinMs,
+           PinLogic logic, ButtonCallback shortCallback, ButtonCallback longCallback);
     
     void begin();
     void update();
@@ -27,15 +33,18 @@ public:
 
 private:
     const uint8_t button_pin;
-    const uint32_t hold_time_us;
+    const uint32_t debounce_ms;
+    const uint32_t short_press_max_ms;
+    const uint32_t long_press_min_ms;
     const PinLogic pin_logic;
-    const ButtonCallback action_callback;
+    const ButtonCallback short_callback;
+    const ButtonCallback long_callback;
     
     // Button state tracking
     bool current_state{false};
     bool last_state{false};
-    bool press_handled{false};
-    uint64_t press_start_time{0};
+    uint32_t press_start_time{0};
+    bool long_press_fired{false};
     
     // Edge detection flags
     bool press_edge{false};
