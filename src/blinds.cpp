@@ -99,11 +99,12 @@ void Blinds::recalculateTimeout() {
 void Blinds::motorMove(const bool close, float max_distance) const {
     const float target = (max_distance >= 0.0F) ? max_distance : motion_length;
     if (!close || !blindsAreClosed()) {
-        Serial.println(close ? "Closing blinds ..." : "Opening blinds ...");
-        
+        Serial.print(close ? "Closing blinds ..." : "Opening blinds ...");
+        Serial.printf(" target=%.1f motion_length=%.1f timeout=%.1fs\n", target, motion_length, motion_timeout);
+
         float position{0.0F};
         float increment{0.0F};
-        
+
         // Select the appropriate max increment based on direction
         const float increment_max = close ? increment_max_close : increment_max_open;
 
@@ -115,17 +116,28 @@ void Blinds::motorMove(const bool close, float max_distance) const {
         const uint32_t timestamp_timeout{timestamp_start + (uint32_t)(motion_timeout * 1000000U)};
         const uint32_t tick_period{1000000U / TICK_FREQ};
         uint32_t end_tick{micros() + tick_period};
+        const uint32_t progress_interval_us{1000000U};  // 1 second
+        uint32_t next_progress_us{timestamp_start + progress_interval_us};
 
         while ((position < target) && (micros() < timestamp_timeout) && (close ? !blindsAreClosed() : true)) {
             increment = ((increment + increment_increment) > increment_max) ? (increment_max) : (increment + increment_increment);
             position += increment;
             const float velocity_scaled_amplitude{(MOTOR_AMPLITUDE_MIN + (MOTOR_AMPLITUDE_MAX - MOTOR_AMPLITUDE_MIN) * (increment / increment_max))};
             motorPosition((close ? -position : position), velocity_scaled_amplitude);
-            
+
+            const uint32_t now_us = micros();
+            if (now_us >= next_progress_us) {
+                Serial.printf("Move progress: position=%.1f target=%.1f (%.0f%%)\n",
+                              position, target, (position / target) * 100.0F);
+                next_progress_us += progress_interval_us;
+            }
+
             while(micros() < end_tick) {}
             end_tick += tick_period;
         }
         motorDisable();
+
+        Serial.printf("Move done: position=%.1f target=%.1f\n", position, target);
     }
 
     Serial.println(close ? "Blinds are closed" : "Blinds are open");

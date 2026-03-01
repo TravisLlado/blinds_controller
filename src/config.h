@@ -32,7 +32,7 @@ constexpr uint8_t END_BYTE        {0x55};
 
 // Configuration packet structure - now with separate open/close speeds
 struct ConfigPacket {
-    float motion_length;
+    float motion_length;      // motor turns
     float motor_speed_open;   // RPM when opening
     float motor_speed_close;  // RPM when closing
 };
@@ -78,8 +78,8 @@ constexpr uint32_t TICK_PERIOD {10U}; // ms
 // Button //////////////////////////////////////////////////////////////////////
 
 constexpr uint32_t PIN_BTN {9U};
-constexpr uint32_t BUTTON_DEBOUNCE_MS    {100U};  // min hold to count as valid press
-constexpr uint32_t BUTTON_SHORT_PRESS_MS {500U};  // short = release between debounce and this
-constexpr uint32_t BUTTON_LONG_PRESS_MS  {1000U}; // long = hold this long (callback fires immediately)
+constexpr uint32_t BUTTON_DEBOUNCE_MS    {100U};  // lower limit for short press
+constexpr uint32_t BUTTON_SHORT_PRESS_MS {500U};  // upper limit for short press
+constexpr uint32_t BUTTON_LONG_PRESS_MS  {1000U}; // single limit for long press
 
 // End of file /////////////////////////////////////////////////////////////////

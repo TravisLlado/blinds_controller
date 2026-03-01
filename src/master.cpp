@@ -23,6 +23,7 @@ void buttonLongPressAction();
 void startOperation();
 void startScheduledOperation(bool openBlinds);
 void querySlaves();
+void querySlavesWithRetries(unsigned long delayMs, uint8_t maxRetries);
 bool sendConfig(uint8_t slave, const ConfigPacket& config);
 bool waitForResponse(uint8_t slave, uint8_t expectedCmd, uint8_t &data);
 void sendCommand(uint8_t slave, uint8_t cmd);
@@ -43,6 +44,10 @@ bool slaveStateValid[NUM_SLAVES] = {false};  // Track if we have valid state dat
 bool targetOpen = false;  // What we're moving blinds to
 unsigned long currentSlaveStart = 0;  // Track start time for current slave
 unsigned long lastHeartbeat = 0;
+
+// Responsive windows: only operate slaves that responded at query time
+uint8_t responsiveSlaveIndices[NUM_SLAVES];  // Slave indices (0-based) that responded
+uint8_t numResponsiveSlaves = 0;             // Count of responsive slaves for current operation
 
 // Button instance (short press = toggle all; long press = close third window halfway)
 Button button(PIN_BTN, BUTTON_DEBOUNCE_MS, BUTTON_SHORT_PRESS_MS, BUTTON_LONG_PRESS_MS,
@@ -109,8 +114,8 @@ void setup() {
   
   delay(1000);
   
-  // Initial slave query
-  querySlaves();
+  // Initial slave query with retries so slow-to-boot slaves get a chance to respond
+  querySlavesWithRetries(2000, 2);
   
   // Fetch time data on startup
   #if SCHEDULING
@@ -153,20 +158,26 @@ void loop() {
   if (millis() - lastHeartbeat >= 10000) {  // Every 10 seconds
     lastHeartbeat = millis();
     
-    // Check if any slave has invalid state
-    bool allValid = true;
+    // Report any slave with invalid state
     for (int i = 0; i < NUM_SLAVES; i++) {
       if (!slaveStateValid[i]) {
         Serial.printf("Communication with slave %d failed\r\n", i + 1);
-        allValid = false;
       }
     }
     
-    // Only print heartbeat if all slaves have valid state
-    if (allValid) {
+    // Print heartbeat for responsive slaves (at least one valid)
+    bool anyValid = false;
+    for (int i = 0; i < NUM_SLAVES; i++) {
+      if (slaveStateValid[i]) { anyValid = true; break; }
+    }
+    if (anyValid) {
       Serial.printf("Master: State=%d Blinds=[", systemState);
       for (int i = 0; i < NUM_SLAVES; i++) {
-        Serial.print(slaveStates[i] ? "OPEN" : "CLOSED");
+        if (slaveStateValid[i]) {
+          Serial.print(slaveStates[i] ? "OPEN" : "CLOSED");
+        } else {
+          Serial.print("?");
+        }
         if (i < (NUM_SLAVES - 1)) Serial.print(",");
       }
       Serial.println("]");
@@ -177,9 +188,10 @@ void loop() {
   processIncoming();
   
   // Timeout check - for current slave
-  if (systemState != IDLE) {
+  if (systemState != IDLE && currentSlaveIndex < numResponsiveSlaves) {
     if ((millis() - currentSlaveStart) > (MOTION_TIMEOUT * 1000U + 1000U)) {
-      Serial.printf("Master: Slave %d timeout - aborting operation\r\n", currentSlaveIndex + 1);
+      uint8_t timedOutSlave = responsiveSlaveIndices[currentSlaveIndex] + 1;
+      Serial.printf("Master: Slave %d timeout - aborting operation\r\n", timedOutSlave);
       systemState = IDLE;
       currentSlaveIndex = 0;
     }
@@ -226,21 +238,29 @@ bool sendConfig(uint8_t slave, const ConfigPacket& config) {
   return waitForResponse(slave, RSP_CONFIG_ACK, dummy);
 }
 
-// Manual button operation - toggles all blinds to synchronized state
+// Manual button operation - toggles responsive blinds: if all closed then open all, else close all
 void startOperation() {
   querySlaves();
   
-  // Check if we have valid state for all slaves
+  // Build list of responsive slaves (only operate those that responded)
+  numResponsiveSlaves = 0;
   for (int i = 0; i < NUM_SLAVES; i++) {
-    if (!slaveStateValid[i]) {
-      Serial.printf("Master: Cannot operate - Slave %d state unknown\r\n", i + 1);
-      return;
+    if (slaveStateValid[i]) {
+      responsiveSlaveIndices[numResponsiveSlaves++] = i;
     }
   }
   
-  // Simple logic: if all closed, open them. Otherwise, close them.
+  if (numResponsiveSlaves == 0) {
+    Serial.println("Master: Cannot operate - no slaves responding");
+    return;
+  }
+  
+  Serial.printf("Master: Operating %d responsive window(s)\r\n", numResponsiveSlaves);
+  
+  // Same logic: if all responsive windows are closed, open all; otherwise close all
   bool allClosed = true;
-  for (int i = 0; i < NUM_SLAVES; i++) {
+  for (uint8_t j = 0; j < numResponsiveSlaves; j++) {
+    int i = responsiveSlaveIndices[j];
     if (slaveStates[i]) {
       allClosed = false;
       break;
@@ -255,17 +275,18 @@ void startOperation() {
     targetOpen = false;
   }
   
-  // Start with first slave
+  // Start with first responsive slave
   currentSlaveIndex = 0;
   systemState = MOVING_BLINDS;
   currentSlaveStart = millis();
   
-  sendConfig(currentSlaveIndex + 1, kSlaveConfig);
-  sendCommand(currentSlaveIndex + 1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-  Serial.printf("Master: Moving slave %d\r\n", currentSlaveIndex + 1);
+  uint8_t slaveId = responsiveSlaveIndices[currentSlaveIndex] + 1;
+  sendConfig(slaveId, kSlaveConfig);
+  sendCommand(slaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
+  Serial.printf("Master: Moving slave %d\r\n", slaveId);
 }
 
-// Scheduled operation - opens or closes all blinds to specified state
+// Scheduled operation - opens or closes responsive blinds to specified state
 void startScheduledOperation(bool openBlinds) {
   if (systemState != IDLE) {
     Serial.println("Master: Cannot start scheduled operation - system busy");
@@ -275,17 +296,23 @@ void startScheduledOperation(bool openBlinds) {
   // Query current states
   querySlaves();
   
-  // Check if we have valid state for all slaves
+  // Build list of responsive slaves
+  numResponsiveSlaves = 0;
   for (int i = 0; i < NUM_SLAVES; i++) {
-    if (!slaveStateValid[i]) {
-      Serial.printf("Master: Cannot operate - Slave %d state unknown\r\n", i + 1);
-      return;
+    if (slaveStateValid[i]) {
+      responsiveSlaveIndices[numResponsiveSlaves++] = i;
     }
   }
   
-  // Check if we're already in the desired state
+  if (numResponsiveSlaves == 0) {
+    Serial.println("Master: Cannot run scheduled operation - no slaves responding");
+    return;
+  }
+  
+  // Check if all responsive blinds are already in the desired state
   bool allInTargetState = true;
-  for (int i = 0; i < NUM_SLAVES; i++) {
+  for (uint8_t j = 0; j < numResponsiveSlaves; j++) {
+    int i = responsiveSlaveIndices[j];
     if (slaveStates[i] != openBlinds) {
       allInTargetState = false;
       break;
@@ -293,24 +320,25 @@ void startScheduledOperation(bool openBlinds) {
   }
   
   if (allInTargetState) {
-    Serial.printf("Master: All blinds already %s - no action needed\r\n", 
+    Serial.printf("Master: All responsive blinds already %s - no action needed\r\n",
                   openBlinds ? "open" : "closed");
     return;
   }
   
-  Serial.printf("Master: Scheduled operation - %s all blinds\r\n", 
-                openBlinds ? "opening" : "closing");
+  Serial.printf("Master: Scheduled operation - %s %d blind(s)\r\n",
+                openBlinds ? "opening" : "closing", numResponsiveSlaves);
   
   targetOpen = openBlinds;
   
-  // Start with first slave
+  // Start with first responsive slave
   currentSlaveIndex = 0;
   systemState = MOVING_BLINDS;
   currentSlaveStart = millis();
   
-  sendConfig(currentSlaveIndex + 1, kSlaveConfig);
-  sendCommand(currentSlaveIndex + 1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-  Serial.printf("Master: Moving slave %d\r\n", currentSlaveIndex + 1);
+  uint8_t slaveId = responsiveSlaveIndices[currentSlaveIndex] + 1;
+  sendConfig(slaveId, kSlaveConfig);
+  sendCommand(slaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
+  Serial.printf("Master: Moving slave %d\r\n", slaveId);
 }
 
 void querySlaves() {
@@ -329,6 +357,24 @@ void querySlaves() {
       slaveStateValid[i] = false;
       Serial.printf("  Slave %d: No response\r\n", slave);
     }
+  }
+}
+
+// Query slaves, then retry after delay for any that didn't respond (e.g. slow boot)
+void querySlavesWithRetries(unsigned long delayMs, uint8_t maxRetries) {
+  querySlaves();
+  for (uint8_t r = 0; r < maxRetries; r++) {
+    bool anyInvalid = false;
+    for (int i = 0; i < NUM_SLAVES; i++) {
+      if (!slaveStateValid[i]) {
+        anyInvalid = true;
+        break;
+      }
+    }
+    if (!anyInvalid) break;
+    Serial.printf("Master: Retrying query in %lu ms for unresponsive slave(s)...\r\n", (unsigned long)delayMs);
+    delay(delayMs);
+    querySlaves();
   }
 }
 
@@ -363,21 +409,23 @@ void processIncoming() {
           }
           
           // If we're in moving state and this is the slave we're waiting for
-          if (systemState == MOVING_BLINDS && slave == (currentSlaveIndex + 1)) {
-            // Move to next slave
+          if (systemState == MOVING_BLINDS && currentSlaveIndex < numResponsiveSlaves &&
+              slave == (responsiveSlaveIndices[currentSlaveIndex] + 1)) {
+            // Move to next responsive slave
             currentSlaveIndex++;
             
-            if (currentSlaveIndex >= NUM_SLAVES) {
-              // All done
+            if (currentSlaveIndex >= numResponsiveSlaves) {
+              // All responsive slaves done
               Serial.println("Master: All operations complete");
               systemState = IDLE;
               currentSlaveIndex = 0;
             } else {
-              // Start next slave (config sent before each motion so slaves keep correct params after brownouts)
+              // Start next responsive slave
               currentSlaveStart = millis();
-              sendConfig(currentSlaveIndex + 1, kSlaveConfig);
-              sendCommand(currentSlaveIndex + 1, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-              Serial.printf("Master: Moving slave %d\r\n", currentSlaveIndex + 1);
+              uint8_t nextSlaveId = responsiveSlaveIndices[currentSlaveIndex] + 1;
+              sendConfig(nextSlaveId, kSlaveConfig);
+              sendCommand(nextSlaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
+              Serial.printf("Master: Moving slave %d\r\n", nextSlaveId);
             }
           }
         }
