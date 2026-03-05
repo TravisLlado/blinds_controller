@@ -1,10 +1,65 @@
 // config.h ////////////////////////////////////////////////////////////////////
 
-#include <Arduino.h>
-#include "timesync.h"
+#pragma once
 
-#define SCHEDULING true
-#define AUTO_OPEN  true
+#include <Arduino.h>
+
+// Time units //////////////////////////////////////////////////////////////////
+
+constexpr int32_t SECOND{1};
+constexpr int32_t MINUTE{60 * SECOND};
+constexpr int32_t HOUR{60 * MINUTE};
+constexpr int32_t DAY{24 * HOUR};
+
+// Room configuration //////////////////////////////////////////////////////////
+
+enum Room : uint8_t { BEDROOM, LIVINGROOM };
+
+struct RoomConfig {
+  const char* mdnsHostname;
+  bool        autoOpen;
+};
+
+constexpr RoomConfig ROOM_CONFIGS[] = {
+  {"bedroomblinds",    false},  // BEDROOM
+  {"livingroomblinds", true},   // LIVINGROOM
+};
+
+constexpr Room ACTIVE_ROOM {LIVINGROOM};
+
+constexpr bool        AUTO_OPEN     {ROOM_CONFIGS[ACTIVE_ROOM].autoOpen};
+constexpr const char* MDNS_HOSTNAME {ROOM_CONFIGS[ACTIVE_ROOM].mdnsHostname};
+
+// LED logical state — active-low: ON = LOW, OFF = HIGH
+enum LedState : uint8_t {
+  LED_ON  = LOW,
+  LED_OFF = HIGH,
+};
+
+// HTTP server port
+constexpr uint16_t SERVER_PORT {80};
+
+// Onboard LED pin (GPIO 8 on Adafruit Qt Py ESP32-C3)
+constexpr uint8_t LED_PIN {8};
+
+// Serial baud rate
+constexpr uint32_t SERIAL_BAUD_RATE {115200};
+
+// Retry delay (ms) for WiFi, geo, and time-sync failures
+constexpr uint32_t RETRY_DELAY_MS {5000};
+
+// Interval (ms) between status log messages in the main loop
+constexpr uint32_t STATUS_INTERVAL_MS {10000};
+
+// Daily NTP/sun-time refresh window (24-hour clock): [START, END)
+constexpr int DAILY_REFRESH_START_HOUR {2};
+constexpr int DAILY_REFRESH_END_HOUR   {4};
+
+// Decimal places used when displaying GPS coordinates
+constexpr int GEO_COORD_DECIMALS {4};
+
+// How often (ms) to check WiFi connectivity and re-join if disconnected
+constexpr uint32_t WIFI_CHECK_INTERVAL_MS {60000};
 
 // RS485 ///////////////////////////////////////////////////////////////////////
 
@@ -53,23 +108,9 @@ constexpr uint8_t NUM_POLE_PAIRS  {11U};
 
 // Scheduling //////////////////////////////////////////////////////////////////
 
-// Location constants
-constexpr float LATITUDE{37.7749F};
-constexpr float LONGITUDE{-122.4194F};
-
-// UTC offset in seconds (-7 hours for PDT)
-constexpr int32_t TIMEZONE_OFFSET{-7 * HOUR};
-
 // Timing offsets for sunrise/sunset actions
 constexpr int32_t SUNRISE_ACTION_OFFSET{30 * MINUTE};  // 30 minutes after sunrise
 constexpr int32_t SUNSET_ACTION_OFFSET{30 * MINUTE};   // 30 minutes before sunset
-
-// Update time constants
-constexpr int32_t UPDATE_HOUR{2};  // 2 AM
-constexpr int32_t UPDATE_WINDOW{5 * MINUTE};  // 5-minute window for updates
-constexpr int32_t RETRY_INTERVAL_SHORT{15 * MINUTE * 1000};  // 15 minutes in milliseconds
-constexpr int32_t RETRY_INTERVAL_LONG{6 * HOUR * 1000};  // 6 hours in milliseconds
-constexpr uint8_t MAX_RETRY_COUNT_SHORT{5U};  // Number of short interval retries
 
 // Program /////////////////////////////////////////////////////////////////////
 
