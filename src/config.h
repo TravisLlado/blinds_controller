@@ -13,7 +13,7 @@ constexpr int32_t DAY{24 * HOUR};
 
 // Room configuration //////////////////////////////////////////////////////////
 
-enum Room : uint8_t { BEDROOM, LIVINGROOM };
+enum Room : uint8_t { BEDROOM, LIVINGROOM, DEMO };
 
 struct RoomConfig {
   const char* mdnsHostname;
@@ -23,9 +23,10 @@ struct RoomConfig {
 constexpr RoomConfig ROOM_CONFIGS[] = {
   {"bedroomblinds",    false},  // BEDROOM
   {"livingroomblinds", true},   // LIVINGROOM
+  {"demoblinds",       true},   // DEMO
 };
 
-constexpr Room ACTIVE_ROOM {LIVINGROOM};
+constexpr Room ACTIVE_ROOM {BEDROOM};
 
 constexpr bool        AUTO_OPEN     {ROOM_CONFIGS[ACTIVE_ROOM].autoOpen};
 constexpr const char* MDNS_HOSTNAME {ROOM_CONFIGS[ACTIVE_ROOM].mdnsHostname};

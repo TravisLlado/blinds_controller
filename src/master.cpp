@@ -56,7 +56,7 @@ unsigned long currentSlaveStart = 0;  // Track start time for current slave
 uint8_t responsiveSlaveIndices[NUM_SLAVES];  // Slave indices (0-based) that responded
 uint8_t numResponsiveSlaves = 0;             // Count of responsive slaves for current operation
 
-// Button instance (short press = toggle all; long press = close third window halfway)
+// Button instance (short press = toggle all; long press = toggle third window only)
 Button button(PIN_BTN, BUTTON_DEBOUNCE_MS, BUTTON_SHORT_PRESS_MS, BUTTON_LONG_PRESS_MS,
               Button::ACTIVE_LOW, buttonAction, buttonLongPressAction);
 
@@ -137,17 +137,55 @@ void onWebSerialMessage(uint8_t* data, size_t len) {
   cmd.trim();
   cmd.toLowerCase();
 
-  if (cmd == "open") {
-    WebSerial.println("Opening all blinds...");
-    startScheduledOperation(true);
-  } else if (cmd == "close") {
-    WebSerial.println("Closing all blinds...");
-    startScheduledOperation(false);
-  } else if (cmd == "half") {
-    WebSerial.println("Closing slave 3 halfway...");
-    sendConfig(3, kSlaveConfig);
-    sendCommand(3, CMD_CLOSE_HALF);
-  } else if (cmd == "status") {
+  // Parse optional --one/--two/--three flag from command
+  static const char* slaveNames[] = {"one", "two", "three"};
+  int targetSlave = 0;  // 0 = all, 1-3 = specific slave
+  String baseCmd = cmd;
+  int dashPos = cmd.indexOf("--");
+  if (dashPos >= 0) {
+    String flag = cmd.substring(dashPos + 2);
+    flag.trim();
+    baseCmd = cmd.substring(0, dashPos);
+    baseCmd.trim();
+    for (int i = 0; i < NUM_SLAVES; i++) {
+      if (flag == slaveNames[i]) {
+        targetSlave = i + 1;
+        break;
+      }
+    }
+    if (targetSlave == 0) {
+      WebSerial.println("Unknown window. Use --one, --two, or --three.");
+      return;
+    }
+  }
+
+  if (baseCmd == "open" || baseCmd == "close") {
+    bool opening = (baseCmd == "open");
+    uint8_t cmdByte = opening ? CMD_OPEN : CMD_CLOSE;
+    if (targetSlave > 0) {
+      if (systemState != IDLE) {
+        WebSerial.println("System busy.");
+        return;
+      }
+      WebSerial.printf("%s window %s...\n", opening ? "Opening" : "Closing", slaveNames[targetSlave - 1]);
+      numResponsiveSlaves = 1;
+      responsiveSlaveIndices[0] = targetSlave - 1;
+      targetOpen = opening;
+      currentSlaveIndex = 0;
+      systemState = MOVING_BLINDS;
+      currentSlaveStart = millis();
+      sendConfig(targetSlave, kSlaveConfig);
+      sendCommand(targetSlave, cmdByte);
+    } else {
+      WebSerial.printf("%s all blinds...\n", opening ? "Opening" : "Closing");
+      startScheduledOperation(opening);
+    }
+  } else if (baseCmd == "half") {
+    uint8_t slave = targetSlave > 0 ? targetSlave : 3;
+    WebSerial.printf("Closing window %s halfway...\n", slaveNames[slave - 1]);
+    sendConfig(slave, kSlaveConfig);
+    sendCommand(slave, CMD_CLOSE_HALF);
+  } else if (baseCmd == "status") {
     WebSerial.printf("State=%d Blinds=[", systemState);
     for (int i = 0; i < NUM_SLAVES; i++) {
       if (slaveStateValid[i]) {
@@ -159,9 +197,11 @@ void onWebSerialMessage(uint8_t* data, size_t len) {
     }
     WebSerial.println("]");
     printTimes();
-  } else if (cmd == "help" || cmd == "?") {
+  } else if (baseCmd == "help" || baseCmd == "?") {
     WebSerial.println("Commands: open, close, half, status, help");
-  } else if (cmd.length() > 0) {
+    WebSerial.println("Add --one, --two, --three for individual windows.");
+    WebSerial.println("Example: open --two");
+  } else if (baseCmd.length() > 0) {
     WebSerial.println("Unknown command. Type 'help' for commands.");
   }
 }
@@ -180,16 +220,39 @@ void buttonAction() {
   }
 }
 
-// Button callback - long press: close third window halfway only
+// Button callback - long press: toggle third window only
 void buttonLongPressAction() {
   if (systemState != IDLE) {
     Serial.println("Master: Long press ignored - system busy");
     return;
   }
-  const uint8_t thirdSlave = 3;
-  Serial.println("Master: Long press - close slave 3 halfway");
-  sendConfig(thirdSlave, kSlaveConfig);
-  sendCommand(thirdSlave, CMD_CLOSE_HALF);
+  const uint8_t thirdSlaveId = 3;
+  const uint8_t thirdSlaveIdx = thirdSlaveId - 1;
+
+  // Query slave 3 to get its current state
+  sendCommand(thirdSlaveId, CMD_QUERY);
+  uint8_t data;
+  if (!waitForResponse(thirdSlaveId, RSP_STATE, data)) {
+    Serial.println("Master: Long press - slave 3 not responding");
+    return;
+  }
+  slaveStates[thirdSlaveIdx] = (data == 1);
+  slaveStateValid[thirdSlaveIdx] = true;
+
+  bool isOpen = slaveStates[thirdSlaveIdx];
+  Serial.printf("Master: Long press - toggling slave 3 (%s -> %s)\r\n",
+                isOpen ? "open" : "closed", isOpen ? "closed" : "open");
+
+  // Set up single-slave operation through the normal state machine
+  numResponsiveSlaves = 1;
+  responsiveSlaveIndices[0] = thirdSlaveIdx;
+  targetOpen = !isOpen;
+  currentSlaveIndex = 0;
+  systemState = MOVING_BLINDS;
+  currentSlaveStart = millis();
+
+  sendConfig(thirdSlaveId, kSlaveConfig);
+  sendCommand(thirdSlaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
 }
 
 // ============================================================================
