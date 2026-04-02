@@ -220,39 +220,59 @@ void buttonAction() {
   }
 }
 
-// Button callback - long press: toggle third window only
+// Button callback - long press: cycle through window states
+// All closed -> open 1 & 2; All open -> close 3; 1 & 2 open, 3 closed -> open 3
 void buttonLongPressAction() {
   if (systemState != IDLE) {
     Serial.println("Master: Long press ignored - system busy");
     return;
   }
-  const uint8_t thirdSlaveId = 3;
-  const uint8_t thirdSlaveIdx = thirdSlaveId - 1;
 
-  // Query slave 3 to get its current state
-  sendCommand(thirdSlaveId, CMD_QUERY);
-  uint8_t data;
-  if (!waitForResponse(thirdSlaveId, RSP_STATE, data)) {
-    Serial.println("Master: Long press - slave 3 not responding");
+  // Query all slaves to get current state
+  querySlaves();
+
+  // Need valid state for all three slaves
+  if (!slaveStateValid[0] || !slaveStateValid[1] || !slaveStateValid[2]) {
+    Serial.println("Master: Long press - not all slaves responding");
     return;
   }
-  slaveStates[thirdSlaveIdx] = (data == 1);
-  slaveStateValid[thirdSlaveIdx] = true;
 
-  bool isOpen = slaveStates[thirdSlaveIdx];
-  Serial.printf("Master: Long press - toggling slave 3 (%s -> %s)\r\n",
-                isOpen ? "open" : "closed", isOpen ? "closed" : "open");
+  const bool closed1 = !slaveStates[0];
+  const bool closed2 = !slaveStates[1];
+  const bool closed3 = !slaveStates[2];
 
-  // Set up single-slave operation through the normal state machine
-  numResponsiveSlaves = 1;
-  responsiveSlaveIndices[0] = thirdSlaveIdx;
-  targetOpen = !isOpen;
+  if (closed1 && closed2 && closed3) {
+    // All closed -> open 1 & 2
+    Serial.println("Master: Long press - all closed, opening 1 & 2");
+    numResponsiveSlaves = 2;
+    responsiveSlaveIndices[0] = 0;
+    responsiveSlaveIndices[1] = 1;
+    targetOpen = true;
+  } else if (!closed1 && !closed2 && !closed3) {
+    // All open -> close 3
+    Serial.println("Master: Long press - all open, closing 3");
+    numResponsiveSlaves = 1;
+    responsiveSlaveIndices[0] = 2;
+    targetOpen = false;
+  } else if (!closed1 && !closed2 && closed3) {
+    // 1 & 2 open, 3 closed -> open 3
+    Serial.println("Master: Long press - 1 & 2 open, opening 3");
+    numResponsiveSlaves = 1;
+    responsiveSlaveIndices[0] = 2;
+    targetOpen = true;
+  } else {
+    Serial.println("Master: Long press - mixed state, no action");
+    return;
+  }
+
   currentSlaveIndex = 0;
   systemState = MOVING_BLINDS;
   currentSlaveStart = millis();
 
-  sendConfig(thirdSlaveId, kSlaveConfig);
-  sendCommand(thirdSlaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
+  uint8_t slaveId = responsiveSlaveIndices[0] + 1;
+  sendConfig(slaveId, kSlaveConfig);
+  sendCommand(slaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
+  Serial.printf("Master: Moving slave %d\r\n", slaveId);
 }
 
 // ============================================================================
