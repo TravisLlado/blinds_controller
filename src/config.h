@@ -1,85 +1,127 @@
 // config.h ////////////////////////////////////////////////////////////////////
 
-#include <Arduino.h>
-#include "TimeSync.h"
+#pragma once
 
-#define SCHEDULING true
-#define AUTO_OPEN true
-#define SINGLE_ACTUATOR false
+#include <Arduino.h>
+
+// Time units //////////////////////////////////////////////////////////////////
+
+constexpr int32_t SECOND{1};
+constexpr int32_t MINUTE{60 * SECOND};
+constexpr int32_t HOUR{60 * MINUTE};
+constexpr int32_t DAY{24 * HOUR};
+
+// Room configuration //////////////////////////////////////////////////////////
+
+enum Room : uint8_t { BEDROOM, LIVINGROOM, DEMO };
+
+struct RoomConfig {
+  const char* mdnsHostname;
+  bool        autoOpen;
+};
+
+constexpr RoomConfig ROOM_CONFIGS[] = {
+  {"bedroomblinds",    false},  // BEDROOM
+  {"livingroomblinds", true},   // LIVINGROOM
+  {"demoblinds",       true},   // DEMO
+};
+
+constexpr Room ACTIVE_ROOM {BEDROOM};
+
+constexpr bool        AUTO_OPEN     {ROOM_CONFIGS[ACTIVE_ROOM].autoOpen};
+constexpr const char* MDNS_HOSTNAME {ROOM_CONFIGS[ACTIVE_ROOM].mdnsHostname};
+
+// LED logical state — active-low: ON = LOW, OFF = HIGH
+enum LedState : uint8_t {
+  LED_ON  = LOW,
+  LED_OFF = HIGH,
+};
+
+// HTTP server port
+constexpr uint16_t SERVER_PORT {80};
+
+// Onboard LED pin (GPIO 8 on Adafruit Qt Py ESP32-C3)
+constexpr uint8_t LED_PIN {8};
+
+// Serial baud rate
+constexpr uint32_t SERIAL_BAUD_RATE {115200};
+
+// Retry delay (ms) for WiFi, geo, and time-sync failures
+constexpr uint32_t RETRY_DELAY_MS {5000};
+
+// Interval (ms) between status log messages in the main loop
+constexpr uint32_t STATUS_INTERVAL_MS {10000};
+
+// Daily NTP/sun-time refresh window (24-hour clock): [START, END)
+constexpr int DAILY_REFRESH_START_HOUR {2};
+constexpr int DAILY_REFRESH_END_HOUR   {4};
+
+// Decimal places used when displaying GPS coordinates
+constexpr int GEO_COORD_DECIMALS {4};
+
+// How often (ms) to check WiFi connectivity and re-join if disconnected
+constexpr uint32_t WIFI_CHECK_INTERVAL_MS {60000};
+
+// RS485 ///////////////////////////////////////////////////////////////////////
+
+const uint8_t NUM_SLAVES  {3};
+const uint8_t RX_TIMEOUT  {200};  // ms
+
+#ifndef SLAVE_ADDRESS
+  constexpr uint32_t SLAVE_ADDRESS  {1};
+#endif
+
+constexpr uint32_t RS485_DE_RE  {1};
+constexpr uint32_t RS485_RX     {2};
+constexpr uint32_t RS485_TX     {0};
+
+constexpr uint8_t CMD_QUERY       {0x01};
+constexpr uint8_t CMD_OPEN        {0x02};
+constexpr uint8_t CMD_CLOSE       {0x03};
+constexpr uint8_t CMD_SET_CONFIG  {0x04};
+constexpr uint8_t CMD_CLOSE_HALF  {0x05};
+constexpr uint8_t RSP_STATE       {0x80};
+constexpr uint8_t RSP_COMPLETE    {0x81};
+constexpr uint8_t RSP_CONFIG_ACK  {0x82};
+constexpr uint8_t START_BYTE      {0xAA};
+constexpr uint8_t END_BYTE        {0x55};
+
+// Configuration packet structure - now with separate open/close speeds
+struct ConfigPacket {
+    float motion_length;      // motor turns
+    float motor_speed_open;   // RPM when opening
+    float motor_speed_close;  // RPM when closing
+};
 
 // Blinds Behavior /////////////////////////////////////////////////////////////
-
-// (~38 ticks per blind slat)
-constexpr uint32_t OPEN_TICKS{4300};
-constexpr float DUTY_CYCLE{0.40F};
-constexpr int32_t TIMEOUT{40000}; // ms
-
-// The same values seem to work fine for all three windows in both rooms
-constexpr uint32_t OPEN_TICKS_1{OPEN_TICKS};
-constexpr uint32_t OPEN_TICKS_2{OPEN_TICKS};
-constexpr uint32_t OPEN_TICKS_3{OPEN_TICKS};
-
-constexpr float DUTY_CYCLE_1{DUTY_CYCLE};
-constexpr float DUTY_CYCLE_2{DUTY_CYCLE};
-constexpr float DUTY_CYCLE_3{DUTY_CYCLE};
-
-constexpr int32_t TIMEOUT_1{TIMEOUT}; // ms
-constexpr int32_t TIMEOUT_2{TIMEOUT}; // ms
-constexpr int32_t TIMEOUT_3{TIMEOUT}; // ms
+constexpr float MOTION_LENGTH      {12.6F * 30.0F}; // motor turns
+constexpr float MOTOR_SPEED_OPEN   {450.0F};  // Spool RPM
+constexpr float MOTOR_SPEED_CLOSE  {600.0F}; // Spool RPM
+constexpr float MOTION_TIMEOUT     {60.0F * MOTION_LENGTH / MOTOR_SPEED_OPEN * 1.5F}; // sec (conservative, based on slower open speed)
 
 // Blinds Hardware /////////////////////////////////////////////////////////////
-
-// Orange -    Speed (Blue)
-// Orange +    Direction (White)
-// Green  -    Encoder (Yellow)
-// Blue   +    Vcc (Red)
-// Blue   -    Gnd (Black)
-// Green  +    Limit (Orange)
-// Brown  -    Gnd (Black)
-// Brown  +    Vcc (Red)
-
-constexpr uint8_t PIN_LIM_1{2U};
-constexpr uint8_t PIN_ENC_1{3U};
-constexpr uint8_t PIN_DIR_1{4U};
-constexpr uint8_t PIN_SPD_1{6U};
-
-constexpr uint8_t PIN_LIM_2{10U};
-constexpr uint8_t PIN_ENC_2{7U};
-constexpr uint8_t PIN_DIR_2{8U};
-constexpr uint8_t PIN_SPD_2{1U};
-
-constexpr uint8_t PIN_LIM_3{21U};
-constexpr uint8_t PIN_ENC_3{20U};
-constexpr uint8_t PIN_DIR_3{9U};
-constexpr uint8_t PIN_SPD_3{0U};
-
-// Program /////////////////////////////////////////////////////////////////////
-
-constexpr uint32_t TICK_PERIOD{10U}; // ms
-
-// Button //////////////////////////////////////////////////////////////////////
-
-constexpr uint32_t PIN_BTN{5U};
-constexpr uint32_t BUTTON_PRESS_LENGTH{200000U}; // us
+constexpr uint8_t PIN_PHASE_A     {5U};
+constexpr uint8_t PIN_PHASE_B     {6U};
+constexpr uint8_t PIN_PHASE_C     {7U};
+constexpr uint8_t PIN_ENABLE      {10U};
+constexpr uint8_t PIN_LIMIT       {4U};
+constexpr uint8_t NUM_POLE_PAIRS  {11U};
 
 // Scheduling //////////////////////////////////////////////////////////////////
-
-// Location constants
-constexpr float LATITUDE{37.7749F};
-constexpr float LONGITUDE{-122.4194F};
-
-// UTC offset in seconds (-7 hours for PDT)
-constexpr int32_t TIMEZONE_OFFSET{-7 * HOUR};
 
 // Timing offsets for sunrise/sunset actions
 constexpr int32_t SUNRISE_ACTION_OFFSET{30 * MINUTE};  // 30 minutes after sunrise
 constexpr int32_t SUNSET_ACTION_OFFSET{30 * MINUTE};   // 30 minutes before sunset
 
-// Update time constants
-constexpr int32_t UPDATE_HOUR{2};  // 2 AM
-constexpr int32_t UPDATE_WINDOW{5 * MINUTE};  // 5-minute window for updates
-constexpr int32_t RETRY_INTERVAL_SHORT{15 * MINUTE * 1000};  // 15 minutes in milliseconds
-constexpr int32_t RETRY_INTERVAL_LONG{6 * HOUR * 1000};  // 6 hours in milliseconds
-constexpr uint8_t MAX_RETRY_COUNT_SHORT{5U};  // Number of short interval retries
+// Program /////////////////////////////////////////////////////////////////////
+
+constexpr uint32_t TICK_PERIOD {10U}; // ms
+
+// Button //////////////////////////////////////////////////////////////////////
+
+constexpr uint32_t PIN_BTN {9U};
+constexpr uint32_t BUTTON_DEBOUNCE_MS    {100U};  // lower limit for short press
+constexpr uint32_t BUTTON_SHORT_PRESS_MS {500U};  // upper limit for short press
+constexpr uint32_t BUTTON_LONG_PRESS_MS  {1000U}; // single limit for long press
 
 // End of file /////////////////////////////////////////////////////////////////
