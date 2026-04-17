@@ -68,8 +68,8 @@ int32_t g_sunset{0};       // Sunset in seconds since midnight
 // Action tracking flags
 bool g_sunriseActionDone{false};
 bool g_sunsetActionDone{false};
-bool g_middayCloseDone{false};   // 11 AM: close window 3 (bedroom only)
-bool g_middayOpenDone{false};    // 1 PM: re-open window 3 (bedroom only)
+bool g_middayCloseDone{false};   // 10:45 AM: close window 3 (bedroom only)
+bool g_middayOpenDone{false};    // 12:45 PM: re-open window 3 (bedroom only)
 
 uint32_t lastPrintTime{0};
 
@@ -352,8 +352,8 @@ void setup() {
       const int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
       if (g_currentTime > sunriseActionTime) g_sunriseActionDone = true;
       if (g_currentTime > sunsetActionTime)  g_sunsetActionDone  = true;
-      if (g_currentTime > 11 * HOUR)         g_middayCloseDone   = true;
-      if (g_currentTime > 13 * HOUR)         g_middayOpenDone    = true;
+      if (g_currentTime > 10 * HOUR + 45 * 60) g_middayCloseDone   = true;
+      if (g_currentTime > 12 * HOUR + 45 * 60) g_middayOpenDone    = true;
 
       // LED indicates scheduled state: ON = blinds should be open
       const bool shouldBeOpen{g_currentTime >= sunriseActionTime && g_currentTime < sunsetActionTime};
@@ -827,10 +827,10 @@ void checkTimeActions() {
     g_sunsetActionDone = true;
   }
 
-  // Bedroom fixed-time actions: close window 3 at 11 AM, re-open at 1 PM
+  // Bedroom fixed-time actions: close window 3 at 10:45 AM, re-open at 12:45 PM
   if (ACTIVE_ROOM == BEDROOM) {
-    // 11 AM: if all three windows are open, close window 3
-    if (!g_middayCloseDone && g_currentTime >= 11 * HOUR) {
+    // 10:45 AM: if all three windows are open, close window 3
+    if (!g_middayCloseDone && g_currentTime >= 10 * HOUR + 45 * 60) {
       g_middayCloseDone = true;
       querySlaves();
       if (slaveStateValid[0] && slaveStateValid[1] && slaveStateValid[2] &&
@@ -848,8 +848,8 @@ void checkTimeActions() {
       }
     }
 
-    // 1 PM: if windows 1 & 2 are open and window 3 is closed, re-open window 3
-    if (!g_middayOpenDone && g_currentTime >= 13 * HOUR) {
+    // 12:45 PM: if windows 1 & 2 are open and window 3 is closed, re-open window 3
+    if (!g_middayOpenDone && g_currentTime >= 12 * HOUR + 45 * 60) {
       g_middayOpenDone = true;
       querySlaves();
       if (slaveStateValid[0] && slaveStateValid[1] && slaveStateValid[2] &&
