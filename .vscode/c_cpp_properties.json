@@ -8,13 +8,13 @@
         {
             "name": "PlatformIO",
             "includePath": [
-                "/Users/travis/Dropbox/Projects/blinds_controller/code/include",
-                "/Users/travis/Dropbox/Projects/blinds_controller/code/src",
+                "/Users/travis/Dropbox/Projects/blinds_iot/include",
+                "/Users/travis/Dropbox/Projects/blinds_iot/src",
                 "/Users/travis/.platformio/packages/framework-arduinoespressif32/libraries/HTTPClient/src",
                 "/Users/travis/.platformio/packages/framework-arduinoespressif32/libraries/WiFiClientSecure/src",
                 "/Users/travis/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
-                "/Users/travis/Dropbox/Projects/blinds_controller/code/.pio/libdeps/esp32-c3-devkitm-1/NTPClient",
-                "/Users/travis/Dropbox/Projects/blinds_controller/code/.pio/libdeps/esp32-c3-devkitm-1/ArduinoJson/src",
+                "/Users/travis/Dropbox/Projects/blinds_iot/.pio/libdeps/esp32-c3-devkitm-1/NTPClient",
+                "/Users/travis/Dropbox/Projects/blinds_iot/.pio/libdeps/esp32-c3-devkitm-1/ArduinoJson/src",
                 "/Users/travis/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
                 "/Users/travis/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include",
                 "/Users/travis/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include/esp_additions/freertos",
@@ -243,13 +243,13 @@
             "browse": {
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
-                    "/Users/travis/Dropbox/Projects/blinds_controller/code/include",
-                    "/Users/travis/Dropbox/Projects/blinds_controller/code/src",
+                    "/Users/travis/Dropbox/Projects/blinds_iot/include",
+                    "/Users/travis/Dropbox/Projects/blinds_iot/src",
                     "/Users/travis/.platformio/packages/framework-arduinoespressif32/libraries/HTTPClient/src",
                     "/Users/travis/.platformio/packages/framework-arduinoespressif32/libraries/WiFiClientSecure/src",
                     "/Users/travis/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
-                    "/Users/travis/Dropbox/Projects/blinds_controller/code/.pio/libdeps/esp32-c3-devkitm-1/NTPClient",
-                    "/Users/travis/Dropbox/Projects/blinds_controller/code/.pio/libdeps/esp32-c3-devkitm-1/ArduinoJson/src",
+                    "/Users/travis/Dropbox/Projects/blinds_iot/.pio/libdeps/esp32-c3-devkitm-1/NTPClient",
+                    "/Users/travis/Dropbox/Projects/blinds_iot/.pio/libdeps/esp32-c3-devkitm-1/ArduinoJson/src",
                     "/Users/travis/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
                     "/Users/travis/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include",
                     "/Users/travis/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include/esp_additions/freertos",
@@ -477,7 +477,7 @@
                 ]
             },
             "defines": [
-                "PLATFORMIO=60118",
+                "PLATFORMIO=60119",
                 "ARDUINO_ADAFRUIT_QTPY_ESP32C3",
                 "ARDUINO_USB_MODE=1",
                 "ARDUINO_USB_CDC_ON_BOOT=1",

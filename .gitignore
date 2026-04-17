@@ -6,3 +6,4 @@ keys.py
 *.pem
 .pio
 credentials.h
+.vscode/
