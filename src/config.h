@@ -26,7 +26,7 @@ constexpr RoomConfig ROOM_CONFIGS[] = {
   {"demoblinds",       true},   // DEMO
 };
 
-constexpr Room ACTIVE_ROOM {BEDROOM};
+constexpr Room ACTIVE_ROOM {LIVINGROOM};
 
 constexpr bool        AUTO_OPEN     {ROOM_CONFIGS[ACTIVE_ROOM].autoOpen};
 constexpr const char* MDNS_HOSTNAME {ROOM_CONFIGS[ACTIVE_ROOM].mdnsHostname};
@@ -112,6 +112,10 @@ constexpr uint8_t NUM_POLE_PAIRS  {11U};
 // Timing offsets for sunrise/sunset actions
 constexpr int32_t SUNRISE_ACTION_OFFSET{30 * MINUTE};  // 30 minutes after sunrise
 constexpr int32_t SUNSET_ACTION_OFFSET{30 * MINUTE};   // 30 minutes before sunset
+
+// Earliest time of day the sunrise action may run — never open blinds before this,
+// even if sunrise + offset is earlier (matters in summer at high latitudes).
+constexpr int32_t MIN_SUNRISE_ACTION_TIME{7 * HOUR};   // 7:00 AM
 
 // Program /////////////////////////////////////////////////////////////////////
 

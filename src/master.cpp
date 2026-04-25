@@ -91,6 +91,12 @@ bool  sunTimesValid   {false};
 unsigned long lastWifiCheckMs     {0};
 int           lastDailyRefreshDay {-1};
 
+// Sunrise action time, clamped to MIN_SUNRISE_ACTION_TIME (never before 7 AM).
+static inline int32_t sunriseActionTimeClamped() {
+  const int32_t t{g_sunrise + SUNRISE_ACTION_OFFSET};
+  return (t < MIN_SUNRISE_ACTION_TIME) ? MIN_SUNRISE_ACTION_TIME : t;
+}
+
 // ============================================================================
 // WiFi / Geo / Time
 // ============================================================================
@@ -348,7 +354,7 @@ void setup() {
                       (timeinfo.tm_min * MINUTE) +
                       timeinfo.tm_sec * SECOND;
 
-      const int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
+      const int32_t sunriseActionTime{sunriseActionTimeClamped()};
       const int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
       if (g_currentTime > sunriseActionTime) g_sunriseActionDone = true;
       if (g_currentTime > sunsetActionTime)  g_sunsetActionDone  = true;
@@ -449,7 +455,7 @@ void loop() {
 
     // Sunrise/sunset action times
     char openStr[9], closeStr[9];
-    formatTimeOfDay(g_sunrise + SUNRISE_ACTION_OFFSET, openStr);
+    formatTimeOfDay(sunriseActionTimeClamped(), openStr);
     formatTimeOfDay(g_sunset  - SUNSET_ACTION_OFFSET,  closeStr);
     msg += " | open ";
     msg += openStr;
@@ -803,8 +809,8 @@ void checkTimeActions() {
     g_middayOpenDone = false;
   }
 
-  // Check for sunrise action (sunrise + offset)
-  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
+  // Check for sunrise action (sunrise + offset, clamped to MIN_SUNRISE_ACTION_TIME)
+  int32_t sunriseActionTime{sunriseActionTimeClamped()};
 
   // Validate the calculated time
   if (sunriseActionTime < 0) sunriseActionTime = 0;
@@ -902,7 +908,7 @@ void printTimes() {
   formatTimeOfDay(g_sunset, sunsetStr);
 
   // Format action times
-  int32_t sunriseActionTime{g_sunrise + SUNRISE_ACTION_OFFSET};
+  int32_t sunriseActionTime{sunriseActionTimeClamped()};
   int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
   formatTimeOfDay(sunriseActionTime, sunriseActionStr);
   formatTimeOfDay(sunsetActionTime, sunsetActionStr);
