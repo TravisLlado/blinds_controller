@@ -7,6 +7,7 @@
 
 #include <Arduino.h>
 #include <HardwareSerial.h>
+#include <esp_task_wdt.h>
 #include "blinds.h"
 #include "button.h"
 #include "config.h"
@@ -58,6 +59,7 @@ void executeCommand(const uint8_t cmd) {
       
     case CMD_OPEN:
       {
+        sendPacket(RSP_COMMAND_ACK, 1);
         if (blinds_are_closed) {
           Serial.printf("Slave %d: Opening...\n", SLAVE_ADDRESS);
           blinds_g.open();
@@ -69,9 +71,10 @@ void executeCommand(const uint8_t cmd) {
         }
       }
       break;
-      
+
     case CMD_CLOSE:
       {
+        sendPacket(RSP_COMMAND_ACK, 0);
         if (blinds_are_closed) {
           sendPacket(RSP_COMPLETE, 0);
           Serial.printf("Slave %d: Already closed\n", SLAVE_ADDRESS);
@@ -145,22 +148,26 @@ void sendPacket(const uint8_t cmd, const uint8_t data) {
 void setup() {
   Serial.begin(115200);
   Serial.printf("Slave %d starting...\n", SLAVE_ADDRESS);
-  
+
   button_g.begin();
-  
+
   pinMode(RS485_DE_RE, OUTPUT);
   digitalWrite(RS485_DE_RE, LOW);
-  
+
   rs485_g.begin(9600, SERIAL_8N1, RS485_RX, RS485_TX);
-  
+
+  esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true);
+  esp_task_wdt_add(NULL);
+
   Serial.println("Ready. Waiting for configuration from master...");
 }
 
 // Loop ////////////////////////////////////////////////////////////////////////
 
 void loop() {
+  esp_task_wdt_reset();
   button_g.update();
-  
+
   // Process RS485 incoming
   static uint8_t rxBuffer[17];  // Maximum size for config packet (now 17 bytes)
   static uint8_t rxIndex{0};

@@ -19,24 +19,48 @@ enum SystemState {
   MOVING_BLINDS
 };
 
+// Which (if any) scheduled action is currently mid-chain, waiting on
+// processIncoming() to confirm the remaining slaves. ACTION_NONE means either
+// nothing is running or a manual (button/WebSerial) operation is running --
+// manual operations never latch a "done" flag so they don't need tracking.
+enum ScheduledAction : uint8_t {
+  ACTION_NONE,
+  ACTION_SUNRISE,
+  ACTION_SUNSET,
+  ACTION_MIDDAY_CLOSE,
+  ACTION_MIDDAY_OPEN,
+};
+
+// Outcome of synchronously attempting to start an operation.
+enum AttemptResult : uint8_t {
+  ATTEMPT_DONE,         // fully resolved already -- e.g. nothing needed to move
+  ATTEMPT_FAILED,       // failed before any slave could be confirmed -- retry later
+  ATTEMPT_IN_PROGRESS,  // first slave confirmed and moving -- resolves asynchronously
+};
+
 uint8_t currentSlaveIndex = 0;  // Track which slave we're currently moving
 
 // Function prototypes
 void buttonAction();
 void buttonLongPressAction();
 void startOperation();
-void startScheduledOperation(bool openBlinds);
+AttemptResult startScheduledOperation(bool openBlinds, ScheduledAction action = ACTION_NONE);
+AttemptResult attemptOperationOnSlaves(const uint8_t* slaveIndices, uint8_t count, bool openBlinds, ScheduledAction action);
+void markScheduledActionResult(bool success);
 void querySlaves();
 void querySlavesWithRetries(unsigned long delayMs, uint8_t maxRetries);
 bool sendConfig(uint8_t slave, const ConfigPacket& config);
+bool sendConfigRetried(uint8_t slave, const ConfigPacket& config);
 bool waitForResponse(uint8_t slave, uint8_t expectedCmd, uint8_t &data);
 void sendCommand(uint8_t slave, uint8_t cmd);
+bool sendCommandConfirmed(uint8_t slave, uint8_t cmd);
+bool commandSlaveConfirmed(uint8_t slave, uint8_t cmd);
 void processIncoming();
 void printTimes();
 void formatTimeOfDay(uint32_t timeOfDay, char* buffer);
 void checkTimeActions();
-void sunriseAction();
-void sunsetAction();
+AttemptResult sunriseAction();
+AttemptResult sunsetAction();
 void fetchGeoBlocking();
 bool syncTimeAndSun();
 void onWebSerialMessage(uint8_t* data, size_t len);
@@ -65,11 +89,22 @@ int32_t g_currentTime{0};  // Current time in seconds since midnight
 int32_t g_sunrise{0};      // Sunrise in seconds since midnight
 int32_t g_sunset{0};       // Sunset in seconds since midnight
 
-// Action tracking flags
+// Action tracking flags -- only set true once an action is CONFIRMED complete,
+// never merely attempted. On failure the corresponding *RetryAt is set instead
+// so checkTimeActions() re-attempts later rather than silently giving up for
+// the day or hammering the bus every tick.
 bool g_sunriseActionDone{false};
 bool g_sunsetActionDone{false};
 bool g_middayCloseDone{false};   // 10:45 AM: close window 3 (bedroom only)
 bool g_middayOpenDone{false};    // 12:45 PM: re-open window 3 (bedroom only)
+
+uint32_t g_sunriseRetryAt{0};
+uint32_t g_sunsetRetryAt{0};
+uint32_t g_middayCloseRetryAt{0};
+uint32_t g_middayOpenRetryAt{0};
+
+// Which scheduled action (if any) is currently mid-chain
+ScheduledAction g_activeScheduledAction{ACTION_NONE};
 
 uint32_t lastPrintTime{0};
 
@@ -182,8 +217,11 @@ void onWebSerialMessage(uint8_t* data, size_t len) {
       currentSlaveIndex = 0;
       systemState = MOVING_BLINDS;
       currentSlaveStart = millis();
-      sendConfig(targetSlave, kSlaveConfig);
-      sendCommand(targetSlave, cmdByte);
+      if (!commandSlaveConfirmed(targetSlave, cmdByte)) {
+        WebSerial.printf("Window %s did not confirm command - aborting.\n", slaveNames[targetSlave - 1]);
+        systemState = IDLE;
+        currentSlaveIndex = 0;
+      }
     } else {
       WebSerial.printf("%s all blinds...\n", opening ? "Opening" : "Closing");
       startScheduledOperation(opening);
@@ -191,7 +229,7 @@ void onWebSerialMessage(uint8_t* data, size_t len) {
   } else if (baseCmd == "half") {
     uint8_t slave = targetSlave > 0 ? targetSlave : 3;
     WebSerial.printf("Closing window %s halfway...\n", slaveNames[slave - 1]);
-    sendConfig(slave, kSlaveConfig);
+    sendConfigRetried(slave, kSlaveConfig);
     sendCommand(slave, CMD_CLOSE_HALF);
   } else if (baseCmd == "status") {
     WebSerial.printf("State=%d Blinds=[", systemState);
@@ -278,9 +316,13 @@ void buttonLongPressAction() {
   currentSlaveStart = millis();
 
   uint8_t slaveId = responsiveSlaveIndices[0] + 1;
-  sendConfig(slaveId, kSlaveConfig);
-  sendCommand(slaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-  Serial.printf("Master: Moving slave %d\r\n", slaveId);
+  if (commandSlaveConfirmed(slaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE))) {
+    Serial.printf("Master: Moving slave %d\r\n", slaveId);
+  } else {
+    Serial.printf("Master: Slave %d did not confirm - aborting\r\n", slaveId);
+    systemState = IDLE;
+    currentSlaveIndex = 0;
+  }
 }
 
 // ============================================================================
@@ -493,6 +535,7 @@ void loop() {
       Serial.printf("Master: Slave %d timeout - aborting operation\r\n", timedOutSlave);
       systemState = IDLE;
       currentSlaveIndex = 0;
+      markScheduledActionResult(false);
     }
   }
 
@@ -541,6 +584,41 @@ bool sendConfig(uint8_t slave, const ConfigPacket& config) {
   return waitForResponse(slave, RSP_CONFIG_ACK, dummy);
 }
 
+// Retries sendConfig() up to COMMAND_RETRY_COUNT times if it goes unacknowledged.
+bool sendConfigRetried(uint8_t slave, const ConfigPacket& config) {
+  for (uint8_t attempt = 0; attempt < COMMAND_RETRY_COUNT; attempt++) {
+    if (sendConfig(slave, config)) return true;
+    if (attempt + 1 < COMMAND_RETRY_COUNT) delay(COMMAND_RETRY_DELAY_MS);
+  }
+  Serial.printf("Master: Slave %d did not ack config after %d attempts\r\n", slave, COMMAND_RETRY_COUNT);
+  return false;
+}
+
+// Sends CMD_OPEN/CMD_CLOSE and waits for the slave's immediate RSP_COMMAND_ACK
+// (sent before motion starts), retrying the send up to COMMAND_RETRY_COUNT
+// times if unacknowledged. This only confirms receipt -- it does not wait for
+// or retry based on motion completion (RSP_COMPLETE), which is handled
+// separately and asynchronously in processIncoming().
+bool sendCommandConfirmed(uint8_t slave, uint8_t cmd) {
+  for (uint8_t attempt = 0; attempt < COMMAND_RETRY_COUNT; attempt++) {
+    sendCommand(slave, cmd);
+    uint8_t dummy;
+    if (waitForResponse(slave, RSP_COMMAND_ACK, dummy)) return true;
+    if (attempt + 1 < COMMAND_RETRY_COUNT) delay(COMMAND_RETRY_DELAY_MS);
+  }
+  Serial.printf("Master: Slave %d did not confirm command 0x%02X after %d attempts\r\n",
+                slave, cmd, COMMAND_RETRY_COUNT);
+  return false;
+}
+
+// Sends config then an open/close command to a single slave, confirming both.
+// Returns false if either step failed after retries -- the slave was not
+// reliably commanded and the caller should not assume it's moving.
+bool commandSlaveConfirmed(uint8_t slave, uint8_t cmd) {
+  if (!sendConfigRetried(slave, kSlaveConfig)) return false;
+  return sendCommandConfirmed(slave, cmd);
+}
+
 // Manual button operation - toggles responsive blinds: if all closed then open all, else close all
 void startOperation() {
   querySlaves();
@@ -584,32 +662,36 @@ void startOperation() {
   currentSlaveStart = millis();
 
   uint8_t slaveId = responsiveSlaveIndices[currentSlaveIndex] + 1;
-  sendConfig(slaveId, kSlaveConfig);
-  sendCommand(slaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-  Serial.printf("Master: Moving slave %d\r\n", slaveId);
+  if (commandSlaveConfirmed(slaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE))) {
+    Serial.printf("Master: Moving slave %d\r\n", slaveId);
+  } else {
+    Serial.printf("Master: Slave %d did not confirm - aborting\r\n", slaveId);
+    systemState = IDLE;
+    currentSlaveIndex = 0;
+  }
 }
 
-// Scheduled operation - opens or closes responsive blinds to specified state
-void startScheduledOperation(bool openBlinds) {
-  if (systemState != IDLE) {
-    Serial.println("Master: Cannot start scheduled operation - system busy");
-    return;
-  }
+// Attempts to move a given subset of slaves (by 0-based index) to the target
+// open/closed state: queries with retry, skips if already in the target
+// state, otherwise starts the (sequential, one-at-a-time) motion chain,
+// confirming the first slave's receipt of the command. `action` tags this
+// attempt for markScheduledActionResult() to resolve later if the chain runs
+// asynchronously (ATTEMPT_IN_PROGRESS) -- pass ACTION_NONE for manual/one-off
+// operations that don't need a done-flag latched.
+AttemptResult attemptOperationOnSlaves(const uint8_t* slaveIndices, uint8_t count, bool openBlinds, ScheduledAction action) {
+  querySlavesWithRetries(COMMAND_RETRY_DELAY_MS, COMMAND_RETRY_COUNT);
 
-  // Query current states
-  querySlaves();
-
-  // Build list of responsive slaves
   numResponsiveSlaves = 0;
-  for (int i = 0; i < NUM_SLAVES; i++) {
+  for (uint8_t j = 0; j < count; j++) {
+    uint8_t i = slaveIndices[j];
     if (slaveStateValid[i]) {
       responsiveSlaveIndices[numResponsiveSlaves++] = i;
     }
   }
 
   if (numResponsiveSlaves == 0) {
-    Serial.println("Master: Cannot run scheduled operation - no slaves responding");
-    return;
+    Serial.println("Master: Cannot run operation - no slaves responding");
+    return ATTEMPT_FAILED;
   }
 
   // Check if all responsive blinds are already in the desired state
@@ -625,10 +707,10 @@ void startScheduledOperation(bool openBlinds) {
   if (allInTargetState) {
     Serial.printf("Master: All responsive blinds already %s - no action needed\r\n",
                   openBlinds ? "open" : "closed");
-    return;
+    return ATTEMPT_DONE;
   }
 
-  Serial.printf("Master: Scheduled operation - %s %d blind(s)\r\n",
+  Serial.printf("Master: Operation - %s %d blind(s)\r\n",
                 openBlinds ? "opening" : "closing", numResponsiveSlaves);
 
   targetOpen = openBlinds;
@@ -639,9 +721,59 @@ void startScheduledOperation(bool openBlinds) {
   currentSlaveStart = millis();
 
   uint8_t slaveId = responsiveSlaveIndices[currentSlaveIndex] + 1;
-  sendConfig(slaveId, kSlaveConfig);
-  sendCommand(slaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
+  if (!commandSlaveConfirmed(slaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE))) {
+    Serial.printf("Master: Slave %d did not confirm - aborting operation\r\n", slaveId);
+    systemState = IDLE;
+    currentSlaveIndex = 0;
+    return ATTEMPT_FAILED;
+  }
+
   Serial.printf("Master: Moving slave %d\r\n", slaveId);
+  g_activeScheduledAction = action;
+  return ATTEMPT_IN_PROGRESS;
+}
+
+// Scheduled operation - opens or closes all responsive blinds to specified
+// state. Used both by the scheduler (which passes a ScheduledAction to track)
+// and directly by the WebSerial "open"/"close" (all) command (which doesn't).
+AttemptResult startScheduledOperation(bool openBlinds, ScheduledAction action) {
+  if (systemState != IDLE) {
+    Serial.println("Master: Cannot start scheduled operation - system busy");
+    return ATTEMPT_FAILED;
+  }
+
+  static const uint8_t allSlaves[NUM_SLAVES] = {0, 1, 2};
+  return attemptOperationOnSlaves(allSlaves, NUM_SLAVES, openBlinds, action);
+}
+
+// Resolves the currently in-flight scheduled action (if any) once its whole
+// chain finishes -- either every slave was confirmed commanded (success) or
+// the chain was aborted (failure). No-op for manual operations, which never
+// set g_activeScheduledAction in the first place.
+void markScheduledActionResult(bool success) {
+  if (g_activeScheduledAction == ACTION_NONE) return;
+
+  const uint32_t retryAt = millis() + SCHEDULE_RETRY_INTERVAL_MS;
+  switch (g_activeScheduledAction) {
+    case ACTION_SUNRISE:
+      if (success) g_sunriseActionDone = true; else g_sunriseRetryAt = retryAt;
+      break;
+    case ACTION_SUNSET:
+      if (success) g_sunsetActionDone = true; else g_sunsetRetryAt = retryAt;
+      break;
+    case ACTION_MIDDAY_CLOSE:
+      if (success) g_middayCloseDone = true; else g_middayCloseRetryAt = retryAt;
+      break;
+    case ACTION_MIDDAY_OPEN:
+      if (success) g_middayOpenDone = true; else g_middayOpenRetryAt = retryAt;
+      break;
+    default:
+      break;
+  }
+
+  Serial.printf("Master: Scheduled action %s\r\n", success ? "completed" : "FAILED - will retry in 60s");
+  WebSerial.printf("Scheduled action %s\r\n", success ? "completed" : "FAILED - will retry in 60s");
+  g_activeScheduledAction = ACTION_NONE;
 }
 
 void querySlaves() {
@@ -722,13 +854,19 @@ void processIncoming() {
               Serial.println("Master: All operations complete");
               systemState = IDLE;
               currentSlaveIndex = 0;
+              markScheduledActionResult(true);
             } else {
               // Start next responsive slave
               currentSlaveStart = millis();
               uint8_t nextSlaveId = responsiveSlaveIndices[currentSlaveIndex] + 1;
-              sendConfig(nextSlaveId, kSlaveConfig);
-              sendCommand(nextSlaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE));
-              Serial.printf("Master: Moving slave %d\r\n", nextSlaveId);
+              if (commandSlaveConfirmed(nextSlaveId, (targetOpen ? CMD_OPEN : CMD_CLOSE))) {
+                Serial.printf("Master: Moving slave %d\r\n", nextSlaveId);
+              } else {
+                Serial.printf("Master: Slave %d did not confirm - aborting operation\r\n", nextSlaveId);
+                systemState = IDLE;
+                currentSlaveIndex = 0;
+                markScheduledActionResult(false);
+              }
             }
           }
         }
@@ -801,13 +939,19 @@ void checkTimeActions() {
     return;
   }
 
-  // Reset flags at midnight
+  // Reset flags (and any pending retries) at midnight
   if (g_currentTime < MINUTE) { // Within the first minute of the day
     g_sunriseActionDone = false;
     g_sunsetActionDone = false;
     g_middayCloseDone = false;
     g_middayOpenDone = false;
+    g_sunriseRetryAt = 0;
+    g_sunsetRetryAt = 0;
+    g_middayCloseRetryAt = 0;
+    g_middayOpenRetryAt = 0;
   }
+
+  const uint32_t nowMs{millis()};
 
   // Check for sunrise action (sunrise + offset, clamped to MIN_SUNRISE_ACTION_TIME)
   int32_t sunriseActionTime{sunriseActionTimeClamped()};
@@ -816,9 +960,15 @@ void checkTimeActions() {
   if (sunriseActionTime < 0) sunriseActionTime = 0;
   if (sunriseActionTime >= DAY) sunriseActionTime = DAY - 1;
 
-  if (!g_sunriseActionDone && g_currentTime >= sunriseActionTime) {
-    if (AUTO_OPEN) sunriseAction();
-    g_sunriseActionDone = true;
+  if (!g_sunriseActionDone && g_currentTime >= sunriseActionTime && nowMs >= g_sunriseRetryAt) {
+    if (AUTO_OPEN) {
+      const AttemptResult result{sunriseAction()};
+      if (result == ATTEMPT_DONE) g_sunriseActionDone = true;
+      else if (result == ATTEMPT_FAILED) g_sunriseRetryAt = nowMs + SCHEDULE_RETRY_INTERVAL_MS;
+      // ATTEMPT_IN_PROGRESS resolves later via markScheduledActionResult()
+    } else {
+      g_sunriseActionDone = true;  // AUTO_OPEN disabled for this room -- nothing to retry
+    }
   }
 
   // Check for sunset action (sunset - offset)
@@ -828,55 +978,51 @@ void checkTimeActions() {
   if (sunsetActionTime < 0) sunsetActionTime = 0;
   if (sunsetActionTime >= DAY) sunsetActionTime = DAY - 1;
 
-  if (!g_sunsetActionDone && g_currentTime >= sunsetActionTime) {
-    sunsetAction();
-    g_sunsetActionDone = true;
+  if (!g_sunsetActionDone && g_currentTime >= sunsetActionTime && nowMs >= g_sunsetRetryAt) {
+    const AttemptResult result{sunsetAction()};
+    if (result == ATTEMPT_DONE) g_sunsetActionDone = true;
+    else if (result == ATTEMPT_FAILED) g_sunsetRetryAt = nowMs + SCHEDULE_RETRY_INTERVAL_MS;
   }
 
   // Bedroom fixed-time actions: close window 3 at 10:45 AM, re-open at 12:45 PM
   if (ACTIVE_ROOM == BEDROOM) {
+    static const uint8_t window3[1] = {2};  // slave index 2 = window 3
+
     // 10:45 AM: if all three windows are open, close window 3
-    if (!g_middayCloseDone && g_currentTime >= 10 * HOUR + 45 * 60) {
-      g_middayCloseDone = true;
-      querySlaves();
+    if (!g_middayCloseDone && g_currentTime >= 10 * HOUR + 45 * 60 && nowMs >= g_middayCloseRetryAt) {
+      querySlavesWithRetries(COMMAND_RETRY_DELAY_MS, COMMAND_RETRY_COUNT);
       if (slaveStateValid[0] && slaveStateValid[1] && slaveStateValid[2] &&
           slaveStates[0] && slaveStates[1] && slaveStates[2]) {
         Serial.println("MIDDAY CLOSE: Closing window 3 (sun protection)");
         WebSerial.println("MIDDAY CLOSE: Closing window 3 (sun protection)");
-        numResponsiveSlaves = 1;
-        responsiveSlaveIndices[0] = 2;  // slave index 2 = window 3
-        targetOpen = false;
-        currentSlaveIndex = 0;
-        systemState = MOVING_BLINDS;
-        currentSlaveStart = millis();
-        sendConfig(3, kSlaveConfig);
-        sendCommand(3, CMD_CLOSE);
+        const AttemptResult result{attemptOperationOnSlaves(window3, 1, false, ACTION_MIDDAY_CLOSE)};
+        if (result == ATTEMPT_DONE) g_middayCloseDone = true;
+        else if (result == ATTEMPT_FAILED) g_middayCloseRetryAt = nowMs + SCHEDULE_RETRY_INTERVAL_MS;
+      } else {
+        // Precondition not met (not all three responding/open yet) -- try again shortly
+        g_middayCloseRetryAt = nowMs + SCHEDULE_RETRY_INTERVAL_MS;
       }
     }
 
     // 12:45 PM: if windows 1 & 2 are open and window 3 is closed, re-open window 3
-    if (!g_middayOpenDone && g_currentTime >= 12 * HOUR + 45 * 60) {
-      g_middayOpenDone = true;
-      querySlaves();
+    if (!g_middayOpenDone && g_currentTime >= 12 * HOUR + 45 * 60 && nowMs >= g_middayOpenRetryAt) {
+      querySlavesWithRetries(COMMAND_RETRY_DELAY_MS, COMMAND_RETRY_COUNT);
       if (slaveStateValid[0] && slaveStateValid[1] && slaveStateValid[2] &&
           slaveStates[0] && slaveStates[1] && !slaveStates[2]) {
         Serial.println("MIDDAY OPEN: Re-opening window 3");
         WebSerial.println("MIDDAY OPEN: Re-opening window 3");
-        numResponsiveSlaves = 1;
-        responsiveSlaveIndices[0] = 2;  // slave index 2 = window 3
-        targetOpen = true;
-        currentSlaveIndex = 0;
-        systemState = MOVING_BLINDS;
-        currentSlaveStart = millis();
-        sendConfig(3, kSlaveConfig);
-        sendCommand(3, CMD_OPEN);
+        const AttemptResult result{attemptOperationOnSlaves(window3, 1, true, ACTION_MIDDAY_OPEN)};
+        if (result == ATTEMPT_DONE) g_middayOpenDone = true;
+        else if (result == ATTEMPT_FAILED) g_middayOpenRetryAt = nowMs + SCHEDULE_RETRY_INTERVAL_MS;
+      } else {
+        g_middayOpenRetryAt = nowMs + SCHEDULE_RETRY_INTERVAL_MS;
       }
     }
   }
 }
 
 // Action to perform after sunrise + offset
-void sunriseAction() {
+AttemptResult sunriseAction() {
   char timeStr[9];
   formatTimeOfDay(g_currentTime, timeStr);
   Serial.print("SUNRISE ACTION TRIGGERED at ");
@@ -884,11 +1030,11 @@ void sunriseAction() {
   WebSerial.println(String("SUNRISE ACTION TRIGGERED at ") + timeStr);
 
   digitalWrite(LED_PIN, LED_ON);
-  startScheduledOperation(true);  // Open all blinds
+  return startScheduledOperation(true, ACTION_SUNRISE);  // Open all blinds
 }
 
 // Action to perform before sunset - offset
-void sunsetAction() {
+AttemptResult sunsetAction() {
   char timeStr[9];
   formatTimeOfDay(g_currentTime, timeStr);
   Serial.print("SUNSET ACTION TRIGGERED at ");
@@ -896,7 +1042,7 @@ void sunsetAction() {
   WebSerial.println(String("SUNSET ACTION TRIGGERED at ") + timeStr);
 
   digitalWrite(LED_PIN, LED_OFF);
-  startScheduledOperation(false); // Close all blinds
+  return startScheduledOperation(false, ACTION_SUNSET);  // Close all blinds
 }
 
 void printTimes() {

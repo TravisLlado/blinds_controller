@@ -83,8 +83,17 @@ constexpr uint8_t CMD_CLOSE_HALF  {0x05};
 constexpr uint8_t RSP_STATE       {0x80};
 constexpr uint8_t RSP_COMPLETE    {0x81};
 constexpr uint8_t RSP_CONFIG_ACK  {0x82};
+constexpr uint8_t RSP_COMMAND_ACK {0x83};
 constexpr uint8_t START_BYTE      {0xAA};
 constexpr uint8_t END_BYTE        {0x55};
+
+// Retry attempts for a query/config/command send that goes unacknowledged
+constexpr uint8_t COMMAND_RETRY_COUNT      {3};
+// Delay (ms) between in-operation retries -- short, this is bus recovery,
+// not "wait for a slow-booting slave" like the boot-time retry delay is
+constexpr uint32_t COMMAND_RETRY_DELAY_MS  {100};
+// How long (ms) to wait before re-attempting a scheduled action that failed
+constexpr uint32_t SCHEDULE_RETRY_INTERVAL_MS {60000};
 
 // Configuration packet structure - now with separate open/close speeds
 struct ConfigPacket {
@@ -106,6 +115,11 @@ constexpr uint8_t PIN_PHASE_C     {7U};
 constexpr uint8_t PIN_ENABLE      {10U};
 constexpr uint8_t PIN_LIMIT       {4U};
 constexpr uint8_t NUM_POLE_PAIRS  {11U};
+
+// Slave hardware watchdog timeout (sec). Generous margin over the tick
+// period -- only needs to catch a stall between motorMove() ticks, not
+// bound the whole (up to ~76s) motion, which is fed every tick.
+constexpr uint8_t WATCHDOG_TIMEOUT_SEC {15U};
 
 // Scheduling //////////////////////////////////////////////////////////////////
 

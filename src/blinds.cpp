@@ -1,4 +1,5 @@
 // blinds.cpp //////////////////////////////////////////////////////////////////
+#include <esp_task_wdt.h>
 #include "blinds.h"
 #include "fast_trig.h"
 
@@ -120,6 +121,7 @@ void Blinds::motorMove(const bool close, float max_distance) const {
         uint32_t next_progress_us{timestamp_start + progress_interval_us};
 
         while ((position < target) && (micros() < timestamp_timeout) && (close ? !blindsAreClosed() : true)) {
+            esp_task_wdt_reset();
             increment = ((increment + increment_increment) > increment_max) ? (increment_max) : (increment + increment_increment);
             position += increment;
             const float velocity_scaled_amplitude{(MOTOR_AMPLITUDE_MIN + (MOTOR_AMPLITUDE_MAX - MOTOR_AMPLITUDE_MIN) * (increment / increment_max))};
