@@ -64,6 +64,10 @@ AttemptResult sunsetAction();
 void fetchGeoBlocking();
 bool syncTimeAndSun();
 void onWebSerialMessage(uint8_t* data, size_t len);
+const char* rs485CmdName(uint8_t cmd);
+void logRs485Traffic(const char* direction, uint8_t slave, uint8_t cmd, int data);
+void logRs485ConfigTx(uint8_t slave, const ConfigPacket& config);
+void flushRs485TrafficLog();
 
 // HTTP server on configured port (URL: http://<MDNS_HOSTNAME>.local/)
 AsyncWebServer server(SERVER_PORT);
@@ -107,6 +111,11 @@ uint32_t g_middayOpenRetryAt{0};
 ScheduledAction g_activeScheduledAction{ACTION_NONE};
 
 uint32_t lastPrintTime{0};
+
+// RS485 traffic debug log -- see logRs485Traffic()/flushRs485TrafficLog()
+char     g_trafficLogBuf[TRAFFIC_LOG_BUF_SIZE];
+size_t   g_trafficLogLen{0};
+uint32_t g_lastTrafficFlush{0};
 
 // Single config for all slaves (from config.h; never changes at runtime)
 static const ConfigPacket kSlaveConfig = {
@@ -528,6 +537,13 @@ void loop() {
   // Process incoming RS485 messages
   processIncoming();
 
+  // RS485 traffic debug log: independent 1s tick, only published when
+  // there was traffic in that window (separate from the 10s status tick above)
+  if (now - g_lastTrafficFlush >= TRAFFIC_LOG_INTERVAL_MS) {
+    g_lastTrafficFlush = now;
+    flushRs485TrafficLog();
+  }
+
   // Timeout check - for current slave
   if (systemState != IDLE && currentSlaveIndex < numResponsiveSlaves) {
     if ((millis() - currentSlaveStart) > (MOTION_TIMEOUT * 1000U + 1000U)) {
@@ -543,10 +559,76 @@ void loop() {
 }
 
 // ============================================================================
+// RS485 traffic debug log
+// ============================================================================
+// Caches every RS485 message sent/received by the master (independent of the
+// regular per-slave Serial/WebSerial logging already scattered through the
+// send/receive functions) and flushes it to WebSerial as one human-readable
+// block on a fixed interval, only when non-empty. Purely for debugging --
+// does not affect any control-flow decision.
+
+const char* rs485CmdName(uint8_t cmd) {
+  switch (cmd) {
+    case CMD_QUERY:       return "QUERY";
+    case CMD_OPEN:        return "OPEN";
+    case CMD_CLOSE:       return "CLOSE";
+    case CMD_CLOSE_HALF:  return "CLOSE_HALF";
+    case CMD_SET_CONFIG:  return "SET_CONFIG";
+    case RSP_STATE:       return "RSP_STATE";
+    case RSP_COMPLETE:    return "RSP_COMPLETE";
+    case RSP_CONFIG_ACK:  return "RSP_CONFIG_ACK";
+    case RSP_COMMAND_ACK: return "RSP_COMMAND_ACK";
+    default:               return "UNKNOWN";
+  }
+}
+
+// Appends one line to the cache. `data` is the packet's data byte, or -1 for
+// packets that don't carry one (e.g. the CMD_OPEN/CMD_CLOSE request itself).
+// Silently drops the line if the buffer is full -- this is a debug aid, not
+// something that should ever affect control flow or block on space.
+void logRs485Traffic(const char* direction, uint8_t slave, uint8_t cmd, int data) {
+  char line[64];
+  int n = (data >= 0)
+    ? snprintf(line, sizeof(line), "[%8lu] %s slave=%u %s data=%d\n",
+               (unsigned long)millis(), direction, slave, rs485CmdName(cmd), data)
+    : snprintf(line, sizeof(line), "[%8lu] %s slave=%u %s\n",
+               (unsigned long)millis(), direction, slave, rs485CmdName(cmd));
+  if (n <= 0 || (g_trafficLogLen + (size_t)n) >= TRAFFIC_LOG_BUF_SIZE) return;
+  memcpy(g_trafficLogBuf + g_trafficLogLen, line, n);
+  g_trafficLogLen += n;
+  g_trafficLogBuf[g_trafficLogLen] = '\0';
+}
+
+// CMD_SET_CONFIG carries a ConfigPacket rather than a single data byte, so it
+// gets its own formatting.
+void logRs485ConfigTx(uint8_t slave, const ConfigPacket& config) {
+  char line[96];
+  int n = snprintf(line, sizeof(line), "[%8lu] TX slave=%u SET_CONFIG len=%.1f openSpd=%.0f closeSpd=%.0f\n",
+                    (unsigned long)millis(), slave, config.motion_length,
+                    config.motor_speed_open, config.motor_speed_close);
+  if (n <= 0 || (g_trafficLogLen + (size_t)n) >= TRAFFIC_LOG_BUF_SIZE) return;
+  memcpy(g_trafficLogBuf + g_trafficLogLen, line, n);
+  g_trafficLogLen += n;
+  g_trafficLogBuf[g_trafficLogLen] = '\0';
+}
+
+// Publishes the cached traffic as one block and clears it -- but only if
+// there's anything to publish. Called on its own fixed interval from loop(),
+// independent of the regular STATUS_INTERVAL_MS status tick.
+void flushRs485TrafficLog() {
+  if (g_trafficLogLen == 0) return;
+  WebSerial.println("--- RS485 traffic (last 1s) ---");
+  WebSerial.println(g_trafficLogBuf);
+  g_trafficLogLen = 0;
+  g_trafficLogBuf[0] = '\0';
+}
+
+// ============================================================================
 // RS485 Communication
 // ============================================================================
 
 bool sendConfig(uint8_t slave, const ConfigPacket& config) {
+  logRs485ConfigTx(slave, config);
   digitalWrite(RS485_DE_RE, HIGH);
   delayMicroseconds(10);
 
@@ -835,6 +917,7 @@ void processIncoming() {
         uint8_t expected = START_BYTE ^ slave ^ cmd ^ data;
 
         if (checksum == expected && cmd == RSP_COMPLETE) {
+          logRs485Traffic("RX", slave, cmd, data);
           Serial.printf("Master: Slave %d movement complete\r\n", slave);
 
           // Update state
@@ -895,6 +978,7 @@ bool waitForResponse(uint8_t slave, uint8_t expectedCmd, uint8_t &data) {
           uint8_t checksum = START_BYTE ^ slave ^ expectedCmd ^ rxBuffer[3];
           if (rxBuffer[4] == checksum) {
             data = rxBuffer[3];
+            logRs485Traffic("RX", slave, expectedCmd, data);
             return true;
           }
         }
@@ -907,6 +991,8 @@ bool waitForResponse(uint8_t slave, uint8_t expectedCmd, uint8_t &data) {
 }
 
 void sendCommand(uint8_t slave, uint8_t cmd) {
+  logRs485Traffic("TX", slave, cmd, -1);
+
   digitalWrite(RS485_DE_RE, HIGH);
   delayMicroseconds(10);
 

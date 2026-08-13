@@ -52,6 +52,13 @@ constexpr uint32_t RETRY_DELAY_MS {5000};
 // Interval (ms) between status log messages in the main loop
 constexpr uint32_t STATUS_INTERVAL_MS {10000};
 
+// RS485 traffic debug log: cached messages are flushed to WebSerial as one
+// block on this interval (independent of STATUS_INTERVAL_MS), only when
+// non-empty. Buffer size bounds how much traffic can be cached between
+// flushes; excess is dropped rather than overflowing.
+constexpr uint32_t TRAFFIC_LOG_INTERVAL_MS {1000};
+constexpr size_t   TRAFFIC_LOG_BUF_SIZE    {2048};
+
 // Daily NTP/sun-time refresh window (24-hour clock): [START, END)
 constexpr int DAILY_REFRESH_START_HOUR {2};
 constexpr int DAILY_REFRESH_END_HOUR   {4};
