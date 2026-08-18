@@ -141,6 +141,14 @@ static inline int32_t sunriseActionTimeClamped() {
   return (t < MIN_SUNRISE_ACTION_TIME) ? MIN_SUNRISE_ACTION_TIME : t;
 }
 
+// True during the bedroom's midday sun-protection window -- window 3 should
+// be left closed rather than opened here, since opening it would just have
+// it auto-closed again minutes later by the ACTION_MIDDAY_CLOSE check.
+static inline bool bedroomMiddayCloseActive() {
+  return ACTIVE_ROOM == BEDROOM &&
+         g_currentTime >= MIDDAY_CLOSE_TIME && g_currentTime < MIDDAY_OPEN_TIME;
+}
+
 // ============================================================================
 // WiFi / Geo / Time
 // ============================================================================
@@ -409,8 +417,8 @@ void setup() {
       const int32_t sunsetActionTime{g_sunset - SUNSET_ACTION_OFFSET};
       if (g_currentTime > sunriseActionTime) g_sunriseActionDone = true;
       if (g_currentTime > sunsetActionTime)  g_sunsetActionDone  = true;
-      if (g_currentTime > 10 * HOUR + 45 * 60) g_middayCloseDone   = true;
-      if (g_currentTime > 12 * HOUR + 45 * 60) g_middayOpenDone    = true;
+      if (g_currentTime > MIDDAY_CLOSE_TIME) g_middayCloseDone   = true;
+      if (g_currentTime > MIDDAY_OPEN_TIME)  g_middayOpenDone    = true;
 
       // LED indicates scheduled state: ON = blinds should be open
       const bool shouldBeOpen{g_currentTime >= sunriseActionTime && g_currentTime < sunsetActionTime};
@@ -738,6 +746,25 @@ void startOperation() {
     targetOpen = false;
   }
 
+  // Bedroom sun-protection: leave window 3 closed during the midday window
+  // instead of opening it just to have it auto-close again minutes later.
+  // (Long press still lets the user force it open.)
+  if (targetOpen && bedroomMiddayCloseActive()) {
+    uint8_t kept = 0;
+    for (uint8_t j = 0; j < numResponsiveSlaves; j++) {
+      if (responsiveSlaveIndices[j] != 2) responsiveSlaveIndices[kept++] = responsiveSlaveIndices[j];
+    }
+    if (kept != numResponsiveSlaves) {
+      Serial.println("Master: Midday window active - leaving window 3 closed");
+      numResponsiveSlaves = kept;
+    }
+  }
+
+  if (numResponsiveSlaves == 0) {
+    Serial.println("Master: Nothing to open (window 3 only, midday window active)");
+    return;
+  }
+
   // Start with first responsive slave
   currentSlaveIndex = 0;
   systemState = MOVING_BLINDS;
@@ -761,6 +788,18 @@ void startOperation() {
 // asynchronously (ATTEMPT_IN_PROGRESS) -- pass ACTION_NONE for manual/one-off
 // operations that don't need a done-flag latched.
 AttemptResult attemptOperationOnSlaves(const uint8_t* slaveIndices, uint8_t count, bool openBlinds, ScheduledAction action) {
+  // Guard against re-entrancy: checkTimeActions() only checks systemState once,
+  // at its own entry, then runs multiple independent blocks (sunrise, sunset,
+  // both bedroom midday actions) in the same call. Without this check here, a
+  // later block could still call in and clobber an operation an earlier block
+  // just started in the same tick -- overwriting responsiveSlaveIndices/
+  // currentSlaveIndex/systemState out from under it and sending a conflicting
+  // command to a slave that's already mid-motion.
+  if (systemState != IDLE) {
+    Serial.println("Master: Cannot start operation - system busy");
+    return ATTEMPT_FAILED;
+  }
+
   querySlavesWithRetries(COMMAND_RETRY_DELAY_MS, COMMAND_RETRY_COUNT);
 
   numResponsiveSlaves = 0;
@@ -825,6 +864,15 @@ AttemptResult startScheduledOperation(bool openBlinds, ScheduledAction action) {
   }
 
   static const uint8_t allSlaves[NUM_SLAVES] = {0, 1, 2};
+  static const uint8_t skipWindow3[NUM_SLAVES - 1] = {0, 1};
+
+  // Bedroom sun-protection: don't open window 3 during the midday window --
+  // it would just be closed again minutes later by the midday-close check.
+  if (openBlinds && bedroomMiddayCloseActive()) {
+    Serial.println("Master: Midday window active - opening 1 & 2 only, leaving 3 closed");
+    return attemptOperationOnSlaves(skipWindow3, NUM_SLAVES - 1, openBlinds, action);
+  }
+
   return attemptOperationOnSlaves(allSlaves, NUM_SLAVES, openBlinds, action);
 }
 
@@ -1075,7 +1123,7 @@ void checkTimeActions() {
     static const uint8_t window3[1] = {2};  // slave index 2 = window 3
 
     // 10:45 AM: if all three windows are open, close window 3
-    if (!g_middayCloseDone && g_currentTime >= 10 * HOUR + 45 * 60 && nowMs >= g_middayCloseRetryAt) {
+    if (!g_middayCloseDone && g_currentTime >= MIDDAY_CLOSE_TIME && nowMs >= g_middayCloseRetryAt) {
       querySlavesWithRetries(COMMAND_RETRY_DELAY_MS, COMMAND_RETRY_COUNT);
       if (slaveStateValid[0] && slaveStateValid[1] && slaveStateValid[2] &&
           slaveStates[0] && slaveStates[1] && slaveStates[2]) {
@@ -1091,7 +1139,7 @@ void checkTimeActions() {
     }
 
     // 12:45 PM: if windows 1 & 2 are open and window 3 is closed, re-open window 3
-    if (!g_middayOpenDone && g_currentTime >= 12 * HOUR + 45 * 60 && nowMs >= g_middayOpenRetryAt) {
+    if (!g_middayOpenDone && g_currentTime >= MIDDAY_OPEN_TIME && nowMs >= g_middayOpenRetryAt) {
       querySlavesWithRetries(COMMAND_RETRY_DELAY_MS, COMMAND_RETRY_COUNT);
       if (slaveStateValid[0] && slaveStateValid[1] && slaveStateValid[2] &&
           slaveStates[0] && slaveStates[1] && !slaveStates[2]) {
