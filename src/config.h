@@ -71,11 +71,11 @@ constexpr uint32_t WIFI_CHECK_INTERVAL_MS {60000};
 
 // RS485 ///////////////////////////////////////////////////////////////////////
 
-const uint8_t NUM_SLAVES  {3};
+const uint8_t NUM_ACTUATORS  {3};
 const uint8_t RX_TIMEOUT  {200};  // ms
 
-#ifndef SLAVE_ADDRESS
-  constexpr uint32_t SLAVE_ADDRESS  {1};
+#ifndef ACTUATOR_ADDRESS
+  constexpr uint32_t ACTUATOR_ADDRESS  {1};
 #endif
 
 constexpr uint32_t RS485_DE_RE  {1};
@@ -97,7 +97,7 @@ constexpr uint8_t END_BYTE        {0x55};
 // Retry attempts for a query/config/command send that goes unacknowledged
 constexpr uint8_t COMMAND_RETRY_COUNT      {3};
 // Delay (ms) between in-operation retries -- short, this is bus recovery,
-// not "wait for a slow-booting slave" like the boot-time retry delay is
+// not "wait for a slow-booting actuator" like the boot-time retry delay is
 constexpr uint32_t COMMAND_RETRY_DELAY_MS  {100};
 // How long (ms) to wait before re-attempting a scheduled action that failed
 constexpr uint32_t SCHEDULE_RETRY_INTERVAL_MS {60000};
@@ -123,7 +123,7 @@ constexpr uint8_t PIN_ENABLE      {10U};
 constexpr uint8_t PIN_LIMIT       {4U};
 constexpr uint8_t NUM_POLE_PAIRS  {11U};
 
-// Slave hardware watchdog timeout (sec). Generous margin over the tick
+// Actuator hardware watchdog timeout (sec). Generous margin over the tick
 // period -- only needs to catch a stall between motorMove() ticks, not
 // bound the whole (up to ~76s) motion, which is fed every tick.
 constexpr uint8_t WATCHDOG_TIMEOUT_SEC {15U};

@@ -1,5 +1,5 @@
 /*
- * ESP32-C3 RS485 Slave - Hardware Window Blind Controller
+ * ESP32-C3 RS485 Actuator - Hardware Window Blind Controller
  * Simple blocking implementation using real Blinds hardware class
  */
 
@@ -30,10 +30,10 @@ Blinds blinds_g(
     PIN_ENABLE,
     PIN_LIMIT,
     NUM_POLE_PAIRS,
-    MOTION_LENGTH,       // Default value, will be overwritten by master
+    MOTION_LENGTH,       // Default value, will be overwritten by controller
     MOTION_TIMEOUT,      // Default value, will be recalculated when config is received
-    MOTOR_SPEED_OPEN,    // Default value, will be overwritten by master
-    MOTOR_SPEED_CLOSE    // Default value, will be overwritten by master
+    MOTOR_SPEED_OPEN,    // Default value, will be overwritten by controller
+    MOTOR_SPEED_CLOSE    // Default value, will be overwritten by controller
 );
 
 Button button_g(PIN_BTN, BUTTON_DEBOUNCE_MS, BUTTON_SHORT_PRESS_MS, BUTTON_LONG_PRESS_MS,
@@ -52,7 +52,7 @@ void executeCommand(const uint8_t cmd) {
     case CMD_QUERY:
       {
         sendPacket(RSP_STATE, !blinds_are_closed);
-        Serial.printf("Slave %d: Query response - %s\n", SLAVE_ADDRESS, (blinds_are_closed ? "CLOSED" : "OPEN"));
+        Serial.printf("Actuator %d: Query response - %s\n", ACTUATOR_ADDRESS, (blinds_are_closed ? "CLOSED" : "OPEN"));
 
       }
       break;
@@ -61,13 +61,13 @@ void executeCommand(const uint8_t cmd) {
       {
         sendPacket(RSP_COMMAND_ACK, 1);
         if (blinds_are_closed) {
-          Serial.printf("Slave %d: Opening...\n", SLAVE_ADDRESS);
+          Serial.printf("Actuator %d: Opening...\n", ACTUATOR_ADDRESS);
           blinds_g.open();
           sendPacket(RSP_COMPLETE, 1);
-          Serial.printf("Slave %d: Open complete\n", SLAVE_ADDRESS);
+          Serial.printf("Actuator %d: Open complete\n", ACTUATOR_ADDRESS);
         } else {
           sendPacket(RSP_COMPLETE, 1);
-          Serial.printf("Slave %d: Already open\n", SLAVE_ADDRESS);
+          Serial.printf("Actuator %d: Already open\n", ACTUATOR_ADDRESS);
         }
       }
       break;
@@ -77,12 +77,12 @@ void executeCommand(const uint8_t cmd) {
         sendPacket(RSP_COMMAND_ACK, 0);
         if (blinds_are_closed) {
           sendPacket(RSP_COMPLETE, 0);
-          Serial.printf("Slave %d: Already closed\n", SLAVE_ADDRESS);
+          Serial.printf("Actuator %d: Already closed\n", ACTUATOR_ADDRESS);
         } else {
-          Serial.printf("Slave %d: Closing...\n", SLAVE_ADDRESS);
+          Serial.printf("Actuator %d: Closing...\n", ACTUATOR_ADDRESS);
           blinds_g.close();
           sendPacket(RSP_COMPLETE, 0);
-          Serial.printf("Slave %d: Close complete\n", SLAVE_ADDRESS);
+          Serial.printf("Actuator %d: Close complete\n", ACTUATOR_ADDRESS);
         }
       }
       break;
@@ -91,12 +91,12 @@ void executeCommand(const uint8_t cmd) {
       {
         if (blinds_are_closed) {
           sendPacket(RSP_COMPLETE, 0);
-          Serial.printf("Slave %d: Already closed, skip close-half\n", SLAVE_ADDRESS);
+          Serial.printf("Actuator %d: Already closed, skip close-half\n", ACTUATOR_ADDRESS);
         } else {
-          Serial.printf("Slave %d: Close halfway...\n", SLAVE_ADDRESS);
+          Serial.printf("Actuator %d: Close halfway...\n", ACTUATOR_ADDRESS);
           blinds_g.closeHalfway();
           sendPacket(RSP_COMPLETE, 0);
-          Serial.printf("Slave %d: Close-half complete\n", SLAVE_ADDRESS);
+          Serial.printf("Actuator %d: Close-half complete\n", ACTUATOR_ADDRESS);
         }
       }
       break;
@@ -115,7 +115,7 @@ void handleConfigCommand(const uint8_t* buffer) {
   blinds_g.setMotorSpeedOpen(config.motor_speed_open);
   blinds_g.setMotorSpeedClose(config.motor_speed_close);
   
-  Serial.printf("Slave %d: Config received\n", SLAVE_ADDRESS);
+  Serial.printf("Actuator %d: Config received\n", ACTUATOR_ADDRESS);
   Serial.printf("  Motion Length: %.2f turns\n", config.motion_length);
   Serial.printf("  Motor Speed (Open): %.2f RPM\n", config.motor_speed_open);
   Serial.printf("  Motor Speed (Close): %.2f RPM\n", config.motor_speed_close);
@@ -129,10 +129,10 @@ void sendPacket(const uint8_t cmd, const uint8_t data) {
   digitalWrite(RS485_DE_RE, HIGH);
   delayMicroseconds(10);
   
-  const uint8_t checksum = START_BYTE ^ SLAVE_ADDRESS ^ cmd ^ data;
+  const uint8_t checksum = START_BYTE ^ ACTUATOR_ADDRESS ^ cmd ^ data;
   
   rs485_g.write(START_BYTE);
-  rs485_g.write(SLAVE_ADDRESS);
+  rs485_g.write(ACTUATOR_ADDRESS);
   rs485_g.write(cmd);
   rs485_g.write(data);
   rs485_g.write(checksum);
@@ -147,7 +147,7 @@ void sendPacket(const uint8_t cmd, const uint8_t data) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.printf("Slave %d starting...\n", SLAVE_ADDRESS);
+  Serial.printf("Actuator %d starting...\n", ACTUATOR_ADDRESS);
 
   button_g.begin();
 
@@ -159,7 +159,7 @@ void setup() {
   esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true);
   esp_task_wdt_add(NULL);
 
-  Serial.println("Ready. Waiting for configuration from master...");
+  Serial.println("Ready. Waiting for configuration from controller...");
 }
 
 // Loop ////////////////////////////////////////////////////////////////////////
@@ -190,15 +190,15 @@ void loop() {
     }
     
     if (rxIndex == expectedLength) {
-      // Check if packet is for this slave
-      if (rxBuffer[1] == SLAVE_ADDRESS) {
+      // Check if packet is for this actuator
+      if (rxBuffer[1] == ACTUATOR_ADDRESS) {
         const uint8_t cmd{rxBuffer[2]};
         
         if (cmd == CMD_SET_CONFIG) {
           // Handle config packet (17 bytes total)
           if (rxBuffer[16] == END_BYTE) {
             // Verify checksum
-            uint8_t checksum = START_BYTE ^ SLAVE_ADDRESS ^ CMD_SET_CONFIG;
+            uint8_t checksum = START_BYTE ^ ACTUATOR_ADDRESS ^ CMD_SET_CONFIG;
             for (int i = 3; i < 15; i++) {
               checksum ^= rxBuffer[i];
             }
@@ -210,7 +210,7 @@ void loop() {
         } else {
           // Handle standard command (5 bytes total)
           if (rxBuffer[4] == END_BYTE) {
-            const uint8_t checksum = START_BYTE ^ SLAVE_ADDRESS ^ cmd;
+            const uint8_t checksum = START_BYTE ^ ACTUATOR_ADDRESS ^ cmd;
             
             if (rxBuffer[3] == checksum) {
               executeCommand(cmd);
