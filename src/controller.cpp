@@ -98,12 +98,17 @@ static inline int32_t sunriseActionTimeClamped() {
   return (t < MIN_SUNRISE_ACTION_TIME) ? MIN_SUNRISE_ACTION_TIME : t;
 }
 
+// Midday sun-protection window bounds, relative to solar noon (local time,
+// so DST is already accounted for in g_sunrise/g_sunset).
+static inline int32_t solarNoon()       { return (g_sunrise + g_sunset) / 2; }
+static inline int32_t middayCloseTime() { return solarNoon() + MIDDAY_CLOSE_OFFSET; }
+static inline int32_t middayOpenTime()  { return solarNoon() + MIDDAY_OPEN_OFFSET; }
+
 // True during the bedroom's midday sun-protection window -- window 3 should
-// be left closed rather than opened here, since opening it would just have
-// it closed again minutes later by checkTimeActions().
+// be left closed when opening blinds here (long press can still force it).
 static inline bool bedroomMiddayCloseActive() {
-  return ACTIVE_ROOM == BEDROOM &&
-         g_currentTime >= MIDDAY_CLOSE_TIME && g_currentTime < MIDDAY_OPEN_TIME;
+  return ACTIVE_ROOM == BEDROOM && sunTimesValid &&
+         g_currentTime >= middayCloseTime() && g_currentTime < middayOpenTime();
 }
 
 // ============================================================================
@@ -250,8 +255,7 @@ void buttonAction() {
   const bool openTarget = !anyOpen;
 
   busy = true;
-  // Bedroom sun-protection: leave window 3 closed during the midday window
-  // instead of opening it just to have it auto-close again minutes later.
+  // Bedroom sun-protection: leave window 3 closed during the midday window.
   // (Long press still lets the user force it open.)
   if (openTarget && bedroomMiddayCloseActive()) {
     Serial.println("Controller: Midday window active - leaving window 3 closed");
@@ -351,9 +355,10 @@ void setup() {
   Serial.println(WebInfo::formatLocalTime(g_sunset));
 
   // Record today's date so the daily-refresh window doesn't refire until
-  // tomorrow. Blind position vs. target is entirely time-of-day driven (see
+  // tomorrow. Scheduled actions are entirely time-of-day driven (see
   // checkTimeActions()), so there's no "already ran today" state to set up
-  // here -- the first loop() tick figures out where the blinds should be.
+  // here -- the first loop() tick enforces whichever action window (if any)
+  // is currently open.
   {
     struct tm timeinfo;
     if (getLocalTime(&timeinfo)) {
@@ -389,6 +394,9 @@ void setup() {
 
 void loop() {
   const unsigned long now{millis()};
+
+  // Flush buffered WebSerial output to the browser
+  WebSerial.loop();
 
   // Update button (handles debouncing and triggers callback)
   button.update();
@@ -464,6 +472,16 @@ void loop() {
     msg += openStr;
     msg += " close ";
     msg += closeStr;
+
+    if (ACTIVE_ROOM == BEDROOM) {
+      char middayCloseStr[9], middayOpenStr[9];
+      formatTimeOfDay(middayCloseTime(), middayCloseStr);
+      formatTimeOfDay(middayOpenTime(),  middayOpenStr);
+      msg += " | midday ";
+      msg += middayCloseStr;
+      msg += "-";
+      msg += middayOpenStr;
+    }
 
     // Actuator states
     msg += " | [";
@@ -768,12 +786,19 @@ void sendCommand(uint8_t actuator, uint8_t cmd) {
 // SCHEDULING FUNCTIONALITY
 // ============================================================================
 
-// Drives the blinds toward wherever they should currently be, purely as a
-// function of time of day. No done-flags, no retry timers: "should this
-// actuator be open right now" is answered fresh every call by comparing the
-// current time to the schedule, and operateActuators() only sends a command
-// when the actuator's last-known state doesn't already match. Call this as
-// often as you like -- once the blinds are where they belong, it's a no-op.
+// True for SCHEDULE_ACTION_WINDOW starting at the given time of day.
+static inline bool inActionWindow(int32_t startTime) {
+  return g_currentTime >= startTime &&
+         g_currentTime < startTime + SCHEDULE_ACTION_WINDOW;
+}
+
+// Drives the blinds toward their scheduled state, purely as a function of
+// time of day. No done-flags, no retry timers: each scheduled action is
+// enforced only during its SCHEDULE_ACTION_WINDOW, and operateActuators()
+// only sends a command when the actuator's last-known state doesn't already
+// match -- so actuators that miss a command (e.g. brief RS485 dropout) are
+// retried every call until the window ends, and outside the windows manual
+// overrides are left alone.
 void checkTimeActions() {
   // Only proceed if we have valid sunrise/sunset data
   if (g_sunrise == 0 || g_sunset == 0 || g_currentTime == 0) {
@@ -797,27 +822,26 @@ void checkTimeActions() {
 
   busy = true;
 
-  if (shouldBeOpen && AUTO_OPEN) {
-    // Bedroom sun-protection: don't open window 3 during the midday window
-    // -- it would just be closed again minutes later by the block below.
+  if (AUTO_OPEN && inActionWindow(openTime)) {
+    // Bedroom sun-protection: don't open window 3 during the midday window.
     if (bedroomMiddayCloseActive()) {
       operateActuators(kSkipWindow3, NUM_ACTUATORS - 1, true);
     } else {
       operateActuators(kAllActuators, NUM_ACTUATORS, true);
     }
-  } else if (!shouldBeOpen) {
+  } else if (inActionWindow(closeTime)) {
     // Blinds always auto-close at the scheduled time regardless of AUTO_OPEN
     // -- only automatic opening is gated per-room.
     operateActuators(kAllActuators, NUM_ACTUATORS, false);
   }
 
   // Bedroom fixed-time sun protection: window 3 gets direct sun during
-  // [MIDDAY_CLOSE_TIME, MIDDAY_OPEN_TIME), so it closes for that window and
-  // reopens after, once 1 & 2 are confirmed open.
+  // [middayCloseTime(), middayOpenTime()), so it closes at the start of that
+  // window and reopens at the end, once 1 & 2 are confirmed open.
   if (ACTIVE_ROOM == BEDROOM) {
-    if (bedroomMiddayCloseActive()) {
+    if (inActionWindow(middayCloseTime())) {
       operateActuators(kWindow3Only, 1, false);
-    } else if (g_currentTime >= MIDDAY_OPEN_TIME &&
+    } else if (inActionWindow(middayOpenTime()) &&
                actuatorStateValid[0] && actuatorStateValid[1] &&
                actuatorStates[0] && actuatorStates[1]) {
       operateActuators(kWindow3Only, 1, true);

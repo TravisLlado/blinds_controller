@@ -26,10 +26,14 @@ constexpr RoomConfig ROOM_CONFIGS[] = {
   {"demoblinds",       true},   // DEMO
 };
 
-constexpr Room ACTIVE_ROOM {BEDROOM};
+// Room is selected per build environment in platformio.ini (-DBLINDS_ROOM=...),
+// e.g. `pio run -e living_room_controller`. Actuator builds don't need one.
+#ifdef BLINDS_ROOM
+constexpr Room ACTIVE_ROOM {BLINDS_ROOM};
 
 constexpr bool        AUTO_OPEN     {ROOM_CONFIGS[ACTIVE_ROOM].autoOpen};
 constexpr const char* MDNS_HOSTNAME {ROOM_CONFIGS[ACTIVE_ROOM].mdnsHostname};
+#endif
 
 // LED logical state — active-low: ON = LOW, OFF = HIGH
 enum LedState : uint8_t {
@@ -139,11 +143,22 @@ constexpr int32_t SUNSET_ACTION_OFFSET{30 * MINUTE};   // 30 minutes before suns
 constexpr int32_t MIN_SUNRISE_ACTION_TIME{7 * HOUR};   // 7:00 AM
 
 // Bedroom sun-protection window: window 3 stays closed within
-// [MIDDAY_CLOSE_TIME, MIDDAY_OPEN_TIME), even when 1 & 2 are opened
+// the midday window (see offsets below), even when 1 & 2 are opened
 // (manually or automatically) -- it gets excluded rather than opened and
 // immediately auto-closed again.
-constexpr int32_t MIDDAY_CLOSE_TIME{10 * HOUR + 45 * MINUTE};  // 10:45 AM
-constexpr int32_t MIDDAY_OPEN_TIME {12 * HOUR + 45 * MINUTE};  // 12:45 PM
+//
+// The window is anchored to solar noon (midpoint of today's sunrise/sunset in
+// local time) rather than fixed clock times, so it tracks the sun across DST
+// changes. Offsets were derived from the original 10:45 AM - 12:45 PM PDT
+// window, tuned in April when solar noon was ~1:10 PM PDT.
+constexpr int32_t MIDDAY_CLOSE_OFFSET{-(2 * HOUR + 25 * MINUTE)};  // 2h25m before solar noon
+constexpr int32_t MIDDAY_OPEN_OFFSET {-(25 * MINUTE)};             // 25m before solar noon
+
+// Each scheduled action (sunrise open, sunset close, midday close/open) is
+// only actively enforced for this long after its start time -- long enough
+// to retry through brief RS485 dropouts, short enough that manual overrides
+// afterward stick instead of being immediately undone.
+constexpr int32_t SCHEDULE_ACTION_WINDOW{5 * MINUTE};
 
 // Program /////////////////////////////////////////////////////////////////////
 
