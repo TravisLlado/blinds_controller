@@ -152,7 +152,7 @@ constexpr int32_t MIN_SUNRISE_ACTION_TIME{7 * HOUR};   // 7:00 AM
 // changes. Offsets were derived from the original 10:45 AM - 12:45 PM PDT
 // window, tuned in April when solar noon was ~1:10 PM PDT.
 constexpr int32_t MIDDAY_CLOSE_OFFSET{-(2 * HOUR + 25 * MINUTE)};  // 2h25m before solar noon
-constexpr int32_t MIDDAY_OPEN_OFFSET {-(25 * MINUTE)};             // 25m before solar noon
+constexpr int32_t MIDDAY_OPEN_OFFSET {-(10 * MINUTE)};             // 10m before solar noon
 
 // Each scheduled action (sunrise open, sunset close, midday close/open) is
 // only actively enforced for this long after its start time -- long enough
