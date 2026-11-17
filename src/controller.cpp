@@ -13,6 +13,7 @@
 #include "credentials.h"
 #include "button.h"
 #include "WebInfo.h"
+#include "Solar.h"
 
 // Function prototypes
 void buttonAction();
@@ -30,7 +31,8 @@ void printTimes();
 void formatTimeOfDay(uint32_t timeOfDay, char* buffer);
 void checkTimeActions();
 void fetchGeoBlocking();
-bool syncTimeAndSun();
+void calculateSunSchedule();
+void printMiddayTimes();
 void onWebSerialMessage(uint8_t* data, size_t len);
 const char* rs485CmdName(uint8_t cmd);
 void logRs485Traffic(const char* direction, uint8_t actuator, uint8_t cmd, int data);
@@ -81,13 +83,16 @@ static const ConfigPacket kActuatorConfig = {
   MOTOR_SPEED_CLOSE
 };
 
-// Geolocation and time state
-float geoLat          {NAN};
-float geoLon          {NAN};
-bool  geoValid        {false};
-int   tzOffsetMinutes {0};
-bool  timeValid       {false};
-bool  sunTimesValid   {false};
+// Site location, looked up from the public IP at power-on
+float geoLat{NAN};
+float geoLon{NAN};
+
+// Midday sun-protection window, in local seconds since midnight.
+// Calculated each morning from when the sun passes MIDDAY_CLOSE_AZIMUTH and
+// MIDDAY_OPEN_AZIMUTH (rooms with MIDDAY_SUN_PROTECT only).
+int32_t g_middayClose{0};
+int32_t g_middayOpen {0};
+bool    g_middayValid{false};
 
 unsigned long lastWifiCheckMs     {0};
 int           lastDailyRefreshDay {-1};
@@ -98,53 +103,78 @@ static inline int32_t sunriseActionTimeClamped() {
   return (t < MIN_SUNRISE_ACTION_TIME) ? MIN_SUNRISE_ACTION_TIME : t;
 }
 
-// Midday sun-protection window bounds, relative to solar noon (local time,
-// so DST is already accounted for in g_sunrise/g_sunset).
-static inline int32_t solarNoon()       { return (g_sunrise + g_sunset) / 2; }
-static inline int32_t middayCloseTime() { return solarNoon() + MIDDAY_CLOSE_OFFSET; }
-static inline int32_t middayOpenTime()  { return solarNoon() + MIDDAY_OPEN_OFFSET; }
-
-// True during the bedroom's midday sun-protection window -- window 3 should
+// True during the midday sun-protection window -- window 3 should
 // be left closed when opening blinds here (long press can still force it).
-static inline bool bedroomMiddayCloseActive() {
-  return ACTIVE_ROOM == BEDROOM && sunTimesValid &&
-         g_currentTime >= middayCloseTime() && g_currentTime < middayOpenTime();
+static inline bool middayCloseActive() {
+  return MIDDAY_SUN_PROTECT && g_middayValid &&
+         g_currentTime >= g_middayClose && g_currentTime < g_middayOpen;
 }
 
 // ============================================================================
-// WiFi / Geo / Time
+// Sun schedule
 // ============================================================================
 
-// Fetch geolocation — blocks with retries until success.
+// Look up site location from the public IP -- blocks with retries until
+// success, since the sun calculations need it.
 void fetchGeoBlocking() {
-  while (!geoValid) {
-    geoValid = WebInfo::fetchGeo(geoLat, geoLon, tzOffsetMinutes);
-    if (geoValid) {
-      Serial.printf("Geo approx: %.4f, %.4f\n", geoLat, geoLon);
-    } else {
-      Serial.println("Geo failed, retrying in 5s...");
-      delay(RETRY_DELAY_MS);
-    }
+  while (!WebInfo::fetchGeo(geoLat, geoLon)) {
+    Serial.println("Geo lookup failed, retrying in 5s...");
+    delay(RETRY_DELAY_MS);
   }
+  Serial.printf("Geo approx: %.*f, %.*f\n", GEO_COORD_DECIMALS, geoLat,
+                GEO_COORD_DECIMALS, geoLon);
 }
 
-// Sync NTP clock and fetch today's sunrise/sunset in one shot.
-// Returns true only if both steps succeed.
-bool syncTimeAndSun() {
-  if (!WebInfo::initTime(tzOffsetMinutes)) {
-    Serial.println("Time sync failed.");
-    return false;
+// Local seconds since midnight for a UTC instant.
+static int32_t localSecondsOfDay(time_t when) {
+  struct tm lt;
+  localtime_r(&when, &lt);
+  return lt.tm_hour * HOUR + lt.tm_min * MINUTE + lt.tm_sec * SECOND;
+}
+
+// Calculate today's sunrise/sunset (and, where MIDDAY_SUN_PROTECT is set, the
+// midday window-3 close/open times) onboard from the clock and site location.
+// Searches local midnight to the next local midnight, so DST-change days
+// (23 or 25 hours long) are handled by the TZ rules. If an event can't be
+// found (only possible near the poles) the previous values are kept.
+void calculateSunSchedule() {
+  const time_t now{time(nullptr)};
+  struct tm lt;
+  localtime_r(&now, &lt);
+  lt.tm_hour  = 0;
+  lt.tm_min   = 0;
+  lt.tm_sec   = 0;
+  lt.tm_isdst = -1;
+  const time_t dayStart{mktime(&lt)};
+  lt.tm_mday += 1;
+  lt.tm_isdst = -1;
+  const time_t dayEnd{mktime(&lt)};
+
+  time_t rise, set;
+  if (Solar::sunriseSunset(dayStart, dayEnd, geoLat, geoLon, rise, set)) {
+    g_sunrise = localSecondsOfDay(rise);
+    g_sunset  = localSecondsOfDay(set);
+    Serial.printf("Sunrise %s, sunset %s\n",
+                  WebInfo::formatLocalTime(g_sunrise).c_str(),
+                  WebInfo::formatLocalTime(g_sunset).c_str());
+  } else {
+    Serial.println("Sunrise/sunset not found today, keeping previous times.");
   }
-  int newRise{-1}, newSet{-1};
-  if (!WebInfo::fetchSunTimes(geoLat, geoLon, tzOffsetMinutes, newRise, newSet)) {
-    Serial.println("Sun times sync failed.");
-    return false;
+
+  if (MIDDAY_SUN_PROTECT) {
+    time_t closeAt, openAt;
+    g_middayValid =
+      Solar::azimuthCrossing(dayStart, dayEnd, geoLat, geoLon,
+                             MIDDAY_CLOSE_AZIMUTH, closeAt) &&
+      Solar::azimuthCrossing(dayStart, dayEnd, geoLat, geoLon,
+                             MIDDAY_OPEN_AZIMUTH, openAt) &&
+      closeAt < openAt;
+    if (g_middayValid) {
+      g_middayClose = localSecondsOfDay(closeAt);
+      g_middayOpen  = localSecondsOfDay(openAt);
+    }
+    printMiddayTimes();
   }
-  g_sunrise     = newRise;
-  g_sunset      = newSet;
-  timeValid     = true;
-  sunTimesValid = true;
-  return true;
 }
 
 // ============================================================================
@@ -255,9 +285,9 @@ void buttonAction() {
   const bool openTarget = !anyOpen;
 
   busy = true;
-  // Bedroom sun-protection: leave window 3 closed during the midday window.
+  // Sun protection: leave window 3 closed during the midday window.
   // (Long press still lets the user force it open.)
-  if (openTarget && bedroomMiddayCloseActive()) {
+  if (openTarget && middayCloseActive()) {
     Serial.println("Controller: Midday window active - leaving window 3 closed");
     operateActuators(kSkipWindow3, NUM_ACTUATORS - 1, openTarget);
   } else {
@@ -341,18 +371,19 @@ void setup() {
   }
   Serial.println("WebSerial: http://" + WiFi.localIP().toString() + "/");
 
-  // Fetch geolocation — required by all subsequent steps
-  fetchGeoBlocking();
-
-  // Sync clock and sun times — retry until success
-  while (!syncTimeAndSun()) {
-    Serial.println("Retrying in 5s...");
+  // Set the clock from NTP -- there's no battery-backed RTC, so the first
+  // sync after boot is required. Retry until it succeeds.
+  WebInfo::initTime(TIMEZONE_POSIX);
+  while (!WebInfo::clockValid() && !WebInfo::syncClock(NTP_SYNC_TIMEOUT_MS)) {
+    Serial.println("Time sync failed, retrying in 5s...");
     delay(RETRY_DELAY_MS);
   }
-  Serial.print("Sunrise (local approx): ");
-  Serial.println(WebInfo::formatLocalTime(g_sunrise));
-  Serial.print("Sunset  (local approx): ");
-  Serial.println(WebInfo::formatLocalTime(g_sunset));
+
+  // Look up location once at power-on (the house doesn't move)
+  fetchGeoBlocking();
+
+  // Sun times are calculated onboard -- no network needed
+  calculateSunSchedule();
 
   // Record today's date so the daily-refresh window doesn't refire until
   // tomorrow. Scheduled actions are entirely time-of-day driven (see
@@ -374,7 +405,7 @@ void setup() {
       lastDailyRefreshDay = timeinfo.tm_mday;
     }
   }
-  Serial.println("Automatic scheduling based on sunrise/sunset active.");
+  Serial.println("Automatic scheduling based on onboard sun calculations active.");
 
   WebSerial.onMessage(onWebSerialMessage);
   WebSerial.begin(&server, "/");
@@ -384,6 +415,7 @@ void setup() {
   WebSerial.println(String("URL: http://") + MDNS_HOSTNAME + ".local/");
   WebSerial.println("Alt: http://" + WiFi.localIP().toString() + "/");
   WebSerial.println("Commands: open, close, half, status, help");
+  printMiddayTimes();
 
   Serial.println("Ready. Manual button control available.");
 }
@@ -419,28 +451,26 @@ void loop() {
                   (timeinfo.tm_min * MINUTE) +
                     timeinfo.tm_sec * SECOND;
 
-    // Daily refresh window: re-fetch geo (picks up DST changes), then
-    // re-sync NTP and re-fetch today's sunrise/sunset.
-    if (timeinfo.tm_hour >= DAILY_REFRESH_END_HOUR && timeinfo.tm_mday != lastDailyRefreshDay) {
-      Serial.println("Daily refresh timed out, skipping until tomorrow.");
-      lastDailyRefreshDay = timeinfo.tm_mday;
-    } else if (timeinfo.tm_hour >= DAILY_REFRESH_START_HOUR &&
-               timeinfo.tm_hour < DAILY_REFRESH_END_HOUR &&
-               timeinfo.tm_mday != lastDailyRefreshDay) {
+    // Daily refresh: correct clock drift from NTP, then calculate today's
+    // sun schedule. An NTP failure isn't fatal -- the clock keeps running
+    // from its last sync (drift is well under a second per day) and the TZ
+    // rules keep DST correct, so the schedule is calculated either way.
+    if (timeinfo.tm_hour >= DAILY_REFRESH_HOUR &&
+        timeinfo.tm_mday != lastDailyRefreshDay) {
       Serial.println("Daily refresh...");
-      WebInfo::fetchGeo(geoLat, geoLon, tzOffsetMinutes);
-      if (syncTimeAndSun()) {
-        lastDailyRefreshDay = timeinfo.tm_mday;
-        // Re-read time so subsequent logic uses the fresh NTP sync
+      lastDailyRefreshDay = timeinfo.tm_mday;
+      if (WebInfo::syncClock(NTP_SYNC_TIMEOUT_MS)) {
+        Serial.println("Clock synced from NTP.");
+        // Re-read time so subsequent logic uses the fresh sync
         if (getLocalTime(&timeinfo)) {
           g_currentTime = (timeinfo.tm_hour * HOUR) +
                           (timeinfo.tm_min * MINUTE) +
                           timeinfo.tm_sec * SECOND;
         }
-        Serial.println("Daily refresh complete.");
       } else {
-        Serial.println("Daily refresh failed, will retry next loop.");
+        Serial.println("NTP sync failed, using onboard clock.");
       }
+      calculateSunSchedule();
     }
 
     // Drive blinds toward wherever they should currently be
@@ -473,14 +503,26 @@ void loop() {
     msg += " close ";
     msg += closeStr;
 
-    if (ACTIVE_ROOM == BEDROOM) {
-      char middayCloseStr[9], middayOpenStr[9];
-      formatTimeOfDay(middayCloseTime(), middayCloseStr);
-      formatTimeOfDay(middayOpenTime(),  middayOpenStr);
+    if (MIDDAY_SUN_PROTECT) {
       msg += " | midday ";
-      msg += middayCloseStr;
-      msg += "-";
-      msg += middayOpenStr;
+      if (g_middayValid) {
+        char middayCloseStr[9], middayOpenStr[9];
+        formatTimeOfDay(g_middayClose, middayCloseStr);
+        formatTimeOfDay(g_middayOpen,  middayOpenStr);
+        msg += middayCloseStr;
+        msg += "-";
+        msg += middayOpenStr;
+      } else {
+        msg += "off";
+      }
+
+      // Live sun position, for tuning MIDDAY_*_AZIMUTH: note the azimuth
+      // when sun starts/stops hitting the desk.
+      double az, el;
+      Solar::position(time(nullptr), geoLat, geoLon, az, el);
+      char sunStr[32];
+      snprintf(sunStr, sizeof(sunStr), " | sun az %.1f el %.1f", az, el);
+      msg += sunStr;
     }
 
     // Actuator states
@@ -823,8 +865,8 @@ void checkTimeActions() {
   busy = true;
 
   if (AUTO_OPEN && inActionWindow(openTime)) {
-    // Bedroom sun-protection: don't open window 3 during the midday window.
-    if (bedroomMiddayCloseActive()) {
+    // Sun protection: don't open window 3 during the midday window.
+    if (middayCloseActive()) {
       operateActuators(kSkipWindow3, NUM_ACTUATORS - 1, true);
     } else {
       operateActuators(kAllActuators, NUM_ACTUATORS, true);
@@ -835,13 +877,14 @@ void checkTimeActions() {
     operateActuators(kAllActuators, NUM_ACTUATORS, false);
   }
 
-  // Bedroom fixed-time sun protection: window 3 gets direct sun during
-  // [middayCloseTime(), middayOpenTime()), so it closes at the start of that
-  // window and reopens at the end, once 1 & 2 are confirmed open.
-  if (ACTIVE_ROOM == BEDROOM) {
-    if (inActionWindow(middayCloseTime())) {
+  // Sun protection: window 3 gets direct sun while the sun is
+  // between MIDDAY_CLOSE_AZIMUTH and MIDDAY_OPEN_AZIMUTH, so it closes when
+  // the sun reaches the first and reopens at the second, once 1 & 2 are
+  // confirmed open.
+  if (MIDDAY_SUN_PROTECT && g_middayValid) {
+    if (inActionWindow(g_middayClose)) {
       operateActuators(kWindow3Only, 1, false);
-    } else if (inActionWindow(middayOpenTime()) &&
+    } else if (inActionWindow(g_middayOpen) &&
                actuatorStateValid[0] && actuatorStateValid[1] &&
                actuatorStates[0] && actuatorStates[1]) {
       operateActuators(kWindow3Only, 1, true);
@@ -881,6 +924,26 @@ void printTimes() {
   msg += ") | ";
   msg += isDaytime ? "Day" : "Night";
 
+  Serial.println(msg);
+  WebSerial.println(msg);
+  printMiddayTimes();
+}
+
+// Publish today's midday window-3 close/open times to Serial and WebSerial.
+// (WebSerial output before WebSerial.begin() in setup() is simply dropped.)
+void printMiddayTimes() {
+  if (!MIDDAY_SUN_PROTECT) return;
+  char msg[96];
+  if (g_middayValid) {
+    char closeStr[9], openStr[9];
+    formatTimeOfDay(g_middayClose, closeStr);
+    formatTimeOfDay(g_middayOpen,  openStr);
+    snprintf(msg, sizeof(msg), "Midday window 3: close %s (az %.0f), open %s (az %.0f)",
+             closeStr, MIDDAY_CLOSE_AZIMUTH, openStr, MIDDAY_OPEN_AZIMUTH);
+  } else {
+    snprintf(msg, sizeof(msg), "Midday window 3: off today (sun doesn't cross az %.0f-%.0f)",
+             MIDDAY_CLOSE_AZIMUTH, MIDDAY_OPEN_AZIMUTH);
+  }
   Serial.println(msg);
   WebSerial.println(msg);
 }

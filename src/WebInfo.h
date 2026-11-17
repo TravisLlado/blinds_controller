@@ -4,21 +4,22 @@
 
 namespace WebInfo {
 
-  // Fetch approximate geolocation and current UTC offset from the device's public IP.
-  // Returns true on success; fills lat, lon in decimal degrees, tzOffsetMinutes as the
-  // current UTC offset in minutes (DST-aware, e.g. -480 for PST, -420 for PDT).
-  bool fetchGeo(float& lat, float& lon, int& tzOffsetMinutes);
+  // Fetch approximate geolocation from the device's public IP (ip-api.com).
+  // Returns true on success; fills lat, lon in decimal degrees.
+  bool fetchGeo(float& lat, float& lon);
 
-  // Configure the ESP32 system clock via NTP using the given UTC offset.
-  // Returns true if NTP sync succeeded.
-  bool initTime(int tzOffsetMinutes);
+  // Start SNTP and set the local timezone (POSIX TZ string, DST rules
+  // included -- see TIMEZONE_POSIX in config.h). Call once at boot. The ESP32
+  // keeps re-syncing in the background after this.
+  void initTime(const char* posixTz);
 
-  // Fetch today's sunrise and sunset times for the given location.
-  // tzOffsetMinutes should be the value filled by fetchGeo().
-  // Returns true on success; fills sunriseSec and sunsetSec as local seconds
-  // since midnight (0-86399).
-  bool fetchSunTimes(float lat, float lon, int tzOffsetMinutes,
-                     int& sunriseSec, int& sunsetSec);
+  // Request an NTP sync now and wait up to timeoutMs for it to complete.
+  // Returns true if the clock was updated from NTP. On failure the clock keeps
+  // running from its last sync, and local time/DST stay correct.
+  bool syncClock(uint32_t timeoutMs);
+
+  // True once the clock has been set from NTP at least once since boot.
+  bool clockValid();
 
   // Format a local seconds-since-midnight value as "HH:MM:SS".
   // Returns "??:??:??" for negative input.

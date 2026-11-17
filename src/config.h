@@ -18,12 +18,13 @@ enum Room : uint8_t { BEDROOM, LIVINGROOM, DEMO };
 struct RoomConfig {
   const char* mdnsHostname;
   bool        autoOpen;
+  bool        middaySunProtect;  // close window 3 midday (see MIDDAY_*_AZIMUTH)
 };
 
 constexpr RoomConfig ROOM_CONFIGS[] = {
-  {"bedroomblinds",    false},  // BEDROOM
-  {"livingroomblinds", true},   // LIVINGROOM
-  {"demoblinds",       true},   // DEMO
+  {"bedroomblinds",    false, true},   // BEDROOM
+  {"livingroomblinds", true,  false},  // LIVINGROOM
+  {"demoblinds",       true,  true},   // DEMO
 };
 
 // Room is selected per build environment in platformio.ini (-DBLINDS_ROOM=...),
@@ -32,6 +33,7 @@ constexpr RoomConfig ROOM_CONFIGS[] = {
 constexpr Room ACTIVE_ROOM {BLINDS_ROOM};
 
 constexpr bool        AUTO_OPEN     {ROOM_CONFIGS[ACTIVE_ROOM].autoOpen};
+constexpr bool        MIDDAY_SUN_PROTECT {ROOM_CONFIGS[ACTIVE_ROOM].middaySunProtect};
 constexpr const char* MDNS_HOSTNAME {ROOM_CONFIGS[ACTIVE_ROOM].mdnsHostname};
 #endif
 
@@ -63,9 +65,23 @@ constexpr uint32_t STATUS_INTERVAL_MS {10000};
 constexpr uint32_t TRAFFIC_LOG_INTERVAL_MS {1000};
 constexpr size_t   TRAFFIC_LOG_BUF_SIZE    {2048};
 
-// Daily NTP/sun-time refresh window (24-hour clock): [START, END)
-constexpr int DAILY_REFRESH_START_HOUR {2};
-constexpr int DAILY_REFRESH_END_HOUR   {4};
+// Local hour (24-hour clock) of the daily clock re-sync and sun-schedule
+// calculation. Runs once per day at or after this hour.
+constexpr int DAILY_REFRESH_HOUR {2};
+
+// Local timezone as a POSIX TZ string. The ESP32 applies the DST rules in it
+// on its own -- no network needed -- so local time stays correct across DST
+// changes even if NTP is unreachable. US Pacific: standard time UTC-8, DST
+// UTC-7 from the 2nd Sunday of March to the 1st Sunday of November.
+// Only needs changing if the timezone or the DST law itself changes.
+constexpr const char* TIMEZONE_POSIX {"PST8PDT,M3.2.0,M11.1.0"};
+
+// NTP servers used to correct clock drift
+constexpr const char* NTP_SERVER_1 {"pool.ntp.org"};
+constexpr const char* NTP_SERVER_2 {"time.nist.gov"};
+
+// How long (ms) to wait for an NTP response before giving up on a sync
+constexpr uint32_t NTP_SYNC_TIMEOUT_MS {10000};
 
 // Decimal places used when displaying GPS coordinates
 constexpr int GEO_COORD_DECIMALS {4};
@@ -142,17 +158,18 @@ constexpr int32_t SUNSET_ACTION_OFFSET{30 * MINUTE};   // 30 minutes before suns
 // even if sunrise + offset is earlier (matters in summer at high latitudes).
 constexpr int32_t MIN_SUNRISE_ACTION_TIME{7 * HOUR};   // 7:00 AM
 
-// Bedroom sun-protection window: window 3 stays closed within
-// the midday window (see offsets below), even when 1 & 2 are opened
+// Midday sun-protection window (rooms with middaySunProtect -- the bedroom,
+// plus the demo board for testing): window 3 stays closed while the sun is in
+// the part of the sky that shines on the desk, even when 1 & 2 are opened
 // (manually or automatically) -- it gets excluded rather than opened and
 // immediately auto-closed again.
 //
-// The window is anchored to solar noon (midpoint of today's sunrise/sunset in
-// local time) rather than fixed clock times, so it tracks the sun across DST
-// changes. Offsets were derived from the original 10:45 AM - 12:45 PM PDT
-// window, tuned in April when solar noon was ~1:10 PM PDT.
-constexpr int32_t MIDDAY_CLOSE_OFFSET{-(2 * HOUR + 10 * MINUTE)};  // 2h25m before solar noon
-constexpr int32_t MIDDAY_OPEN_OFFSET {-(10 * MINUTE)};             // 10m before solar noon
+// Defined by sun azimuth (degrees clockwise from true north: 90 = east,
+// 180 = south). Each morning the controller calculates when the sun
+// will pass these azimuths today: window 3 closes when the sun reaches
+// MIDDAY_CLOSE_AZIMUTH and reopens when it reaches MIDDAY_OPEN_AZIMUTH.
+constexpr double MIDDAY_CLOSE_AZIMUTH {150.0};  // degrees
+constexpr double MIDDAY_OPEN_AZIMUTH  {175.0};  // degrees
 
 // Each scheduled action (sunrise open, sunset close, midday close/open) is
 // only actively enforced for this long after its start time -- long enough
