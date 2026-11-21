@@ -19,12 +19,13 @@ struct RoomConfig {
   const char* mdnsHostname;
   bool        autoOpen;
   bool        middaySunProtect;  // close window 3 midday (see MIDDAY_*_AZIMUTH)
+  const char* bedOccupancyUrl;   // open once the bed's been empty (see BED_*), or nullptr
 };
 
 constexpr RoomConfig ROOM_CONFIGS[] = {
-  {"bedroomblinds",    false, true},   // BEDROOM
-  {"livingroomblinds", true,  false},  // LIVINGROOM
-  {"demoblinds",       true,  true},   // DEMO
+  {"bedroomblinds",    false, true,  "http://bedoccupancy.local/state"},  // BEDROOM
+  {"livingroomblinds", true,  false, nullptr},                            // LIVINGROOM
+  {"demoblinds",       true,  true,  nullptr},                            // DEMO
 };
 
 // Room is selected per build environment in platformio.ini (-DBLINDS_ROOM=...),
@@ -35,6 +36,8 @@ constexpr Room ACTIVE_ROOM {BLINDS_ROOM};
 constexpr bool        AUTO_OPEN     {ROOM_CONFIGS[ACTIVE_ROOM].autoOpen};
 constexpr bool        MIDDAY_SUN_PROTECT {ROOM_CONFIGS[ACTIVE_ROOM].middaySunProtect};
 constexpr const char* MDNS_HOSTNAME {ROOM_CONFIGS[ACTIVE_ROOM].mdnsHostname};
+constexpr const char* BED_OCCUPANCY_URL {ROOM_CONFIGS[ACTIVE_ROOM].bedOccupancyUrl};
+constexpr bool        BED_OCCUPANCY_OPEN {BED_OCCUPANCY_URL != nullptr};
 #endif
 
 // LED logical state — active-low: ON = LOW, OFF = HIGH
@@ -42,6 +45,9 @@ enum LedState : uint8_t {
   LED_ON  = LOW,
   LED_OFF = HIGH,
 };
+
+// Longest command accepted from the browser console
+constexpr size_t CONSOLE_CMD_MAX_LEN {64};
 
 // HTTP server port
 constexpr uint16_t SERVER_PORT {80};
@@ -58,7 +64,7 @@ constexpr uint32_t RETRY_DELAY_MS {5000};
 // Interval (ms) between status log messages in the main loop
 constexpr uint32_t STATUS_INTERVAL_MS {10000};
 
-// RS485 traffic debug log: cached messages are flushed to WebSerial as one
+// RS485 traffic debug log: cached messages are flushed to the console as one
 // block on this interval (independent of STATUS_INTERVAL_MS), only when
 // non-empty. Buffer size bounds how much traffic can be cached between
 // flushes; excess is dropped rather than overflowing.
@@ -170,6 +176,28 @@ constexpr int32_t MIN_SUNRISE_ACTION_TIME{7 * HOUR};   // 7:00 AM
 // MIDDAY_CLOSE_AZIMUTH and reopens when it reaches MIDDAY_OPEN_AZIMUTH.
 constexpr double MIDDAY_CLOSE_AZIMUTH {150.0};  // degrees
 constexpr double MIDDAY_OPEN_AZIMUTH  {175.0};  // degrees
+
+// Bed-occupancy open (rooms with bedOccupancyUrl -- the bedroom). Instead of
+// opening at a fixed time, the controller polls the bed-occupancy sensor
+// (github.com/TravisLlado/bed-occupancy) and opens all blinds once per day,
+// the first time all of these hold:
+//   - after the sunrise action time (sunrise + SUNRISE_ACTION_OFFSET, and
+//     never before MIN_SUNRISE_ACTION_TIME)
+//   - before the sunset action time (sunset - SUNSET_ACTION_OFFSET)
+//   - outside the midday sun-protection window
+//   - nobody in bed right now, and the bed's last 5+ minute occupancy ended
+//     more than BED_EMPTY_BEFORE_OPEN ago
+// The time checks run first, onboard; the sensor is only asked (every
+// BED_POLL_INTERVAL_MS) once they pass and today's open hasn't happened.
+// lastInBed 0 (nobody in bed since the sensor booted) counts as empty long
+// enough. An unreachable sensor or stale reading means "don't open" -- the
+// blinds stay put until a good one.
+constexpr int32_t  BED_EMPTY_BEFORE_OPEN {1 * HOUR};
+constexpr uint32_t BED_POLL_INTERVAL_MS  {10000};
+constexpr uint32_t BED_HTTP_TIMEOUT_MS   {1500};
+// Reject a reading whose measurement time is further than this from our own
+// clock -- the sensor publishes every second, so an old one means it stalled.
+constexpr int32_t  BED_MAX_READING_AGE   {30 * SECOND};
 
 // Each scheduled action (sunrise open, sunset close, midday close/open) is
 // only actively enforced for this long after its start time -- long enough

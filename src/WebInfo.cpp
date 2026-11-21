@@ -42,6 +42,61 @@ bool fetchGeo(float& lat, float& lon) {
   return true;
 }
 
+// Raw text of a top-level JSON field's value (number/bool/null), e.g. "true"
+// or "1763512345". Enough for the sensor's flat, fixed-format object.
+static bool jsonValue(const String& body, const char* key, String& out) {
+  const String pattern{String("\"") + key + "\":"};
+  const int start{body.indexOf(pattern)};
+  if (start < 0) return false;
+  int i{start + static_cast<int>(pattern.length())};
+  int end{i};
+  while (end < static_cast<int>(body.length()) && body[end] != ',' && body[end] != '}') end++;
+  out = body.substring(i, end);
+  out.trim();
+  return out.length() > 0;
+}
+
+static bool jsonBool(const String& body, const char* key, bool& out) {
+  String v;
+  if (!jsonValue(body, key, v)) return false;
+  if (v == "true")  { out = true;  return true; }
+  if (v == "false") { out = false; return true; }
+  return false;
+}
+
+static bool jsonInt64(const String& body, const char* key, int64_t& out) {
+  String v;
+  if (!jsonValue(body, key, v)) return false;
+  char* endPtr{nullptr};
+  const long long n{strtoll(v.c_str(), &endPtr, 10)};
+  if (endPtr == v.c_str() || *endPtr != '\0') return false;  // also rejects null
+  out = n;
+  return true;
+}
+
+bool fetchBedState(const char* url, uint32_t timeoutMs, BedState& out) {
+  HTTPClient http;
+  http.setConnectTimeout(timeoutMs);
+  http.setTimeout(timeoutMs);
+  if (!http.begin(url)) return false;
+
+  const int code{http.GET()};
+  if (code != 200) { http.end(); return false; }
+
+  String body{http.getString()};
+  http.end();
+
+  bool left, right;
+  BedState s;
+  if (!jsonBool(body, "left", left) || !jsonBool(body, "right", right) ||
+      !jsonInt64(body, "time", s.time) || !jsonInt64(body, "lastInBed", s.lastInBed)) {
+    return false;
+  }
+  s.occupied = left || right;
+  out = s;
+  return true;
+}
+
 void initTime(const char* posixTz) {
   sntp_set_time_sync_notification_cb(onTimeSync);
   configTzTime(posixTz, NTP_SERVER_1, NTP_SERVER_2);

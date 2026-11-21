@@ -7,7 +7,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
-#include <WebSerial.h>
+#include <WebConsole.h>
 #include <time.h>
 #include "config.h"
 #include "credentials.h"
@@ -33,7 +33,9 @@ void checkTimeActions();
 void fetchGeoBlocking();
 void calculateSunSchedule();
 void printMiddayTimes();
-void onWebSerialMessage(uint8_t* data, size_t len);
+void onConsoleLine(const char* line, size_t len);
+void runPendingCommand();
+void handleCommand(String cmd);
 const char* rs485CmdName(uint8_t cmd);
 void logRs485Traffic(const char* direction, uint8_t actuator, uint8_t cmd, int data);
 void logRs485ConfigTx(uint8_t actuator, const ConfigPacket& config);
@@ -45,12 +47,15 @@ AsyncWebServer server(SERVER_PORT);
 // RS485 Communication
 HardwareSerial rs485(0);
 
-// True while a multi-step RS485 exchange (query/config/command + response)
-// is in flight. The RS485 bus and DE/RE pin are shared, single-outstanding-
-// request resources, and WebSerial's message callback can fire from a
-// separate task (AsyncTCP) concurrently with the main loop -- this flag is
-// the guard that keeps two exchanges from interleaving on the wire.
-bool busy{false};
+// Browser console at http://<MDNS_HOSTNAME>.local/
+WebConsole webConsole;
+
+// The console's line handler runs on the AsyncTCP task. It only copies the
+// line here; loop() runs it, so every RS485 exchange happens on the loop task
+// and two can never interleave on the bus.
+static portMUX_TYPE s_cmdMux = portMUX_INITIALIZER_UNLOCKED;
+static char         s_pendingCmd[CONSOLE_CMD_MAX_LEN + 1];
+static bool         s_hasPendingCmd{false};
 
 bool actuatorStates[NUM_ACTUATORS] = {false};  // false=closed, true=open
 bool actuatorStateValid[NUM_ACTUATORS] = {false};  // Track if we have valid state data
@@ -94,6 +99,13 @@ int32_t g_middayClose{0};
 int32_t g_middayOpen {0};
 bool    g_middayValid{false};
 
+// Bed-occupancy open (rooms with BED_OCCUPANCY_OPEN) -- see config.h.
+// g_bedOpenAt is the local time of day today's open was triggered (-1 = not
+// yet); the open is then enforced for SCHEDULE_ACTION_WINDOW like the other
+// scheduled actions. Reset by the daily refresh.
+int32_t  g_bedOpenAt   {-1};
+uint32_t lastBedPollMs {0};
+
 unsigned long lastWifiCheckMs     {0};
 int           lastDailyRefreshDay {-1};
 
@@ -108,6 +120,21 @@ static inline int32_t sunriseActionTimeClamped() {
 static inline bool middayCloseActive() {
   return MIDDAY_SUN_PROTECT && g_middayValid &&
          g_currentTime >= g_middayClose && g_currentTime < g_middayOpen;
+}
+
+// Asks the bed sensor (network) whether nobody's in bed now and the last 5+
+// minute occupancy ended more than BED_EMPTY_BEFORE_OPEN ago -- or there's
+// been none since the sensor booted (lastInBed 0). No response or a stale
+// reading counts as "no". A sensor reboot under a sleeper also reads 0, but
+// the occupied-now check still blocks that.
+static bool bedEmptyLongEnough() {
+  WebInfo::BedState bed;
+  if (!WebInfo::fetchBedState(BED_OCCUPANCY_URL, BED_HTTP_TIMEOUT_MS, bed)) return false;
+  const int64_t nowUtc{static_cast<int64_t>(time(nullptr))};
+  const int64_t age{nowUtc - bed.time};
+  if (age > BED_MAX_READING_AGE || age < -BED_MAX_READING_AGE) return false;
+  return !bed.occupied &&
+         (bed.lastInBed == 0 || nowUtc - bed.lastInBed > BED_EMPTY_BEFORE_OPEN);
 }
 
 // ============================================================================
@@ -178,14 +205,37 @@ void calculateSunSchedule() {
 }
 
 // ============================================================================
-// WebSerial command handler
+// Console commands
 // ============================================================================
 
-void onWebSerialMessage(uint8_t* data, size_t len) {
-  String cmd;
-  for (size_t i{0}; i < len; i++) {
-    cmd += (char)data[i];
+// AsyncTCP task: queue the line for loop(). Dropped if the previous one
+// hasn't run yet or it's too long to be a command.
+void onConsoleLine(const char* line, size_t len) {
+  if (len > CONSOLE_CMD_MAX_LEN) return;
+  portENTER_CRITICAL(&s_cmdMux);
+  if (!s_hasPendingCmd) {
+    memcpy(s_pendingCmd, line, len);
+    s_pendingCmd[len] = '\0';
+    s_hasPendingCmd = true;
   }
+  portEXIT_CRITICAL(&s_cmdMux);
+}
+
+// Loop task: run the queued console command, if any.
+void runPendingCommand() {
+  char line[CONSOLE_CMD_MAX_LEN + 1];
+  bool have{false};
+  portENTER_CRITICAL(&s_cmdMux);
+  if (s_hasPendingCmd) {
+    memcpy(line, s_pendingCmd, sizeof(line));
+    s_hasPendingCmd = false;
+    have = true;
+  }
+  portEXIT_CRITICAL(&s_cmdMux);
+  if (have) handleCommand(String(line));
+}
+
+void handleCommand(String cmd) {
   cmd.trim();
   cmd.toLowerCase();
 
@@ -206,52 +256,48 @@ void onWebSerialMessage(uint8_t* data, size_t len) {
       }
     }
     if (targetActuator == 0) {
-      WebSerial.println("Unknown window. Use --one, --two, or --three.");
+      webConsole.println("Unknown window. Use --one, --two, or --three.");
       return;
     }
   }
 
   if (baseCmd == "open" || baseCmd == "close") {
-    if (busy) {
-      WebSerial.println("System busy.");
-      return;
-    }
     const bool opening = (baseCmd == "open");
-    busy = true;
     if (targetActuator > 0) {
-      WebSerial.printf("%s window %s...\n", opening ? "Opening" : "Closing", actuatorNames[targetActuator - 1]);
+      webConsole.printf("%s window %s...\n", opening ? "Opening" : "Closing", actuatorNames[targetActuator - 1]);
       const uint8_t idx[1] = {static_cast<uint8_t>(targetActuator - 1)};
       if (!operateActuators(idx, 1, opening)) {
-        WebSerial.printf("Window %s did not confirm.\n", actuatorNames[targetActuator - 1]);
+        webConsole.printf("Window %s did not confirm.\n", actuatorNames[targetActuator - 1]);
       }
     } else {
-      WebSerial.printf("%s all blinds...\n", opening ? "Opening" : "Closing");
+      webConsole.printf("%s all blinds...\n", opening ? "Opening" : "Closing");
       operateActuators(kAllActuators, NUM_ACTUATORS, opening);
     }
-    busy = false;
   } else if (baseCmd == "half") {
     uint8_t actuator = targetActuator > 0 ? targetActuator : 3;
-    WebSerial.printf("Closing window %s halfway...\n", actuatorNames[actuator - 1]);
+    webConsole.printf("Closing window %s halfway...\n", actuatorNames[actuator - 1]);
     sendConfigRetried(actuator, kActuatorConfig);
     sendCommand(actuator, CMD_CLOSE_HALF);
   } else if (baseCmd == "status") {
-    WebSerial.printf("Busy=%d Blinds=[", busy);
+    webConsole.print("Blinds=[");
     for (int i = 0; i < NUM_ACTUATORS; i++) {
       if (actuatorStateValid[i]) {
-        WebSerial.print(actuatorStates[i] ? "OPEN" : "CLOSED");
+        webConsole.print(actuatorStates[i] ? "OPEN" : "CLOSED");
       } else {
-        WebSerial.print("?");
+        webConsole.print("?");
       }
-      if (i < (NUM_ACTUATORS - 1)) WebSerial.print(",");
+      if (i < (NUM_ACTUATORS - 1)) webConsole.print(",");
     }
-    WebSerial.println("]");
+    webConsole.println("]");
+    webConsole.printf("Location %.*f, %.*f (from IP)\n", GEO_COORD_DECIMALS, geoLat,
+                      GEO_COORD_DECIMALS, geoLon);
     printTimes();
   } else if (baseCmd == "help" || baseCmd == "?") {
-    WebSerial.println("Commands: open, close, half, status, help");
-    WebSerial.println("Add --one, --two, --three for individual windows.");
-    WebSerial.println("Example: open --two");
+    webConsole.println("Commands: open, close, half, status, help");
+    webConsole.println("Add --one, --two, --three for individual windows.");
+    webConsole.println("Example: open --two");
   } else if (baseCmd.length() > 0) {
-    WebSerial.println("Unknown command. Type 'help' for commands.");
+    webConsole.println("Unknown command. Type 'help' for commands.");
   }
 }
 
@@ -262,10 +308,6 @@ void onWebSerialMessage(uint8_t* data, size_t len) {
 // Button callback - short press: toggle all blinds (any open -> close all,
 // all closed -> open all).
 void buttonAction() {
-  if (busy) {
-    Serial.println("Controller: Button pressed but system busy - ignoring");
-    return;
-  }
   Serial.println("Controller: Manual button pressed");
   queryActuators();
 
@@ -284,7 +326,6 @@ void buttonAction() {
 
   const bool openTarget = !anyOpen;
 
-  busy = true;
   // Sun protection: leave window 3 closed during the midday window.
   // (Long press still lets the user force it open.)
   if (openTarget && middayCloseActive()) {
@@ -294,17 +335,11 @@ void buttonAction() {
     Serial.printf("Controller: %s all\r\n", openTarget ? "Opening" : "Closing");
     operateActuators(kAllActuators, NUM_ACTUATORS, openTarget);
   }
-  busy = false;
 }
 
 // Button callback - long press: cycle through window states
 // All closed -> open 1 & 2; All open -> close 3; 1 & 2 open, 3 closed -> open 3
 void buttonLongPressAction() {
-  if (busy) {
-    Serial.println("Controller: Long press ignored - system busy");
-    return;
-  }
-
   queryActuators();
 
   if (!actuatorStateValid[0] || !actuatorStateValid[1] || !actuatorStateValid[2]) {
@@ -316,7 +351,6 @@ void buttonLongPressAction() {
   const bool open2{actuatorStates[1]};
   const bool open3{actuatorStates[2]};
 
-  busy = true;
   if (!open1 && !open2 && !open3) {
     Serial.println("Controller: Long press - all closed, opening 1 & 2");
     operateActuators(kSkipWindow3, NUM_ACTUATORS - 1, true);
@@ -329,7 +363,6 @@ void buttonLongPressAction() {
   } else {
     Serial.println("Controller: Long press - mixed state, no action");
   }
-  busy = false;
 }
 
 // ============================================================================
@@ -369,7 +402,7 @@ void setup() {
   } else {
     Serial.println("mDNS failed");
   }
-  Serial.println("WebSerial: http://" + WiFi.localIP().toString() + "/");
+  Serial.println("Console: http://" + WiFi.localIP().toString() + "/");
 
   // Set the clock from NTP -- there's no battery-backed RTC, so the first
   // sync after boot is required. Retry until it succeeds.
@@ -407,14 +440,13 @@ void setup() {
   }
   Serial.println("Automatic scheduling based on onboard sun calculations active.");
 
-  WebSerial.onMessage(onWebSerialMessage);
-  WebSerial.begin(&server, "/");
+  webConsole.begin(server, "/", onConsoleLine);
   server.begin();
 
-  WebSerial.println("WebSerial ready.");
-  WebSerial.println(String("URL: http://") + MDNS_HOSTNAME + ".local/");
-  WebSerial.println("Alt: http://" + WiFi.localIP().toString() + "/");
-  WebSerial.println("Commands: open, close, half, status, help");
+  webConsole.println("Console ready.");
+  webConsole.println(String("URL: http://") + MDNS_HOSTNAME + ".local/");
+  webConsole.println("Alt: http://" + WiFi.localIP().toString() + "/");
+  webConsole.println("Commands: open, close, half, status, help");
   printMiddayTimes();
 
   Serial.println("Ready. Manual button control available.");
@@ -427,8 +459,8 @@ void setup() {
 void loop() {
   const unsigned long now{millis()};
 
-  // Flush buffered WebSerial output to the browser
-  WebSerial.loop();
+  // Run any command typed in the browser console
+  runPendingCommand();
 
   // Update button (handles debouncing and triggers callback)
   button.update();
@@ -471,6 +503,7 @@ void loop() {
         Serial.println("NTP sync failed, using onboard clock.");
       }
       calculateSunSchedule();
+      g_bedOpenAt = -1;  // new day: bed-occupancy open can trigger again
     }
 
     // Drive blinds toward wherever they should currently be
@@ -481,10 +514,8 @@ void loop() {
   if (now - lastPrintTime >= STATUS_INTERVAL_MS) {
     lastPrintTime = now;
 
-    // Poll actuator state when idle (avoid interfering with active operations)
-    if (!busy) {
-      queryActuators();
-    }
+    // Poll actuator state
+    queryActuators();
 
     // Build combined status line
     String msg;
@@ -515,14 +546,6 @@ void loop() {
       } else {
         msg += "off";
       }
-
-      // Live sun position, for tuning MIDDAY_*_AZIMUTH: note the azimuth
-      // when sun starts/stops hitting the desk.
-      double az, el;
-      Solar::position(time(nullptr), geoLat, geoLon, az, el);
-      char sunStr[32];
-      snprintf(sunStr, sizeof(sunStr), " | sun az %.1f el %.1f", az, el);
-      msg += sunStr;
     }
 
     // Actuator states
@@ -537,12 +560,8 @@ void loop() {
     }
     msg += "]";
 
-    if (busy) {
-      msg += " MOVING";
-    }
-
     Serial.println(msg);
-    WebSerial.println(msg);
+    webConsole.println(msg);
   }
 
   // RS485 traffic debug log: independent 1s tick, only published when
@@ -552,6 +571,9 @@ void loop() {
     flushRs485TrafficLog();
   }
 
+  // Send this tick's console output to the browser
+  webConsole.loop();
+
   delay(TICK_PERIOD);
 }
 
@@ -559,8 +581,8 @@ void loop() {
 // RS485 traffic debug log
 // ============================================================================
 // Caches every RS485 message sent/received by the controller (independent of the
-// regular per-actuator Serial/WebSerial logging already scattered through the
-// send/receive functions) and flushes it to WebSerial as one human-readable
+// regular per-actuator Serial/console logging already scattered through the
+// send/receive functions) and flushes it to the console as one human-readable
 // block on a fixed interval, only when non-empty. Purely for debugging --
 // does not affect any control-flow decision.
 
@@ -614,8 +636,8 @@ void logRs485ConfigTx(uint8_t actuator, const ConfigPacket& config) {
 // independent of the regular STATUS_INTERVAL_MS status tick.
 void flushRs485TrafficLog() {
   if (g_trafficLogLen == 0) return;
-  WebSerial.println("--- RS485 traffic (last 1s) ---");
-  WebSerial.println(g_trafficLogBuf);
+  webConsole.println("--- RS485 traffic (last 1s) ---");
+  webConsole.println(g_trafficLogBuf);
   g_trafficLogLen = 0;
   g_trafficLogBuf[0] = '\0';
 }
@@ -847,8 +869,6 @@ void checkTimeActions() {
     return;  // Don't spam warnings - just skip silently
   }
 
-  if (busy) return;
-
   int32_t openTime{sunriseActionTimeClamped()};
   if (openTime < 0) openTime = 0;
   if (openTime >= DAY) openTime = DAY - 1;
@@ -862,9 +882,22 @@ void checkTimeActions() {
   // LED indicates scheduled state: ON = blinds should be open
   digitalWrite(LED_PIN, shouldBeOpen ? LED_ON : LED_OFF);
 
-  busy = true;
+  // Bed-occupancy open: trigger once per day, the first time every condition
+  // holds. Onboard checks first; the sensor is only asked once they all pass.
+  if (BED_OCCUPANCY_OPEN && g_bedOpenAt < 0 &&
+      g_currentTime >= openTime && g_currentTime < closeTime &&
+      !middayCloseActive() &&
+      millis() - lastBedPollMs >= BED_POLL_INTERVAL_MS) {
+    lastBedPollMs = millis();
+    if (bedEmptyLongEnough()) {
+      g_bedOpenAt = g_currentTime;
+      Serial.println("Bed empty long enough -- opening blinds");
+      webConsole.println("Bed empty long enough -- opening blinds");
+    }
+  }
+  const bool bedOpenDue{g_bedOpenAt >= 0 && inActionWindow(g_bedOpenAt)};
 
-  if (AUTO_OPEN && inActionWindow(openTime)) {
+  if ((AUTO_OPEN && inActionWindow(openTime)) || bedOpenDue) {
     // Sun protection: don't open window 3 during the midday window.
     if (middayCloseActive()) {
       operateActuators(kSkipWindow3, NUM_ACTUATORS - 1, true);
@@ -890,8 +923,6 @@ void checkTimeActions() {
       operateActuators(kWindow3Only, 1, true);
     }
   }
-
-  busy = false;
 }
 
 void printTimes() {
@@ -925,12 +956,12 @@ void printTimes() {
   msg += isDaytime ? "Day" : "Night";
 
   Serial.println(msg);
-  WebSerial.println(msg);
+  webConsole.println(msg);
   printMiddayTimes();
 }
 
-// Publish today's midday window-3 close/open times to Serial and WebSerial.
-// (WebSerial output before WebSerial.begin() in setup() is simply dropped.)
+// Publish today's midday window-3 close/open times to Serial and webConsole.
+// (Console output is dropped while no browser is connected.)
 void printMiddayTimes() {
   if (!MIDDAY_SUN_PROTECT) return;
   char msg[96];
@@ -938,14 +969,12 @@ void printMiddayTimes() {
     char closeStr[9], openStr[9];
     formatTimeOfDay(g_middayClose, closeStr);
     formatTimeOfDay(g_middayOpen,  openStr);
-    snprintf(msg, sizeof(msg), "Midday window 3: close %s (az %.0f), open %s (az %.0f)",
-             closeStr, MIDDAY_CLOSE_AZIMUTH, openStr, MIDDAY_OPEN_AZIMUTH);
+    snprintf(msg, sizeof(msg), "Midday window 3: close %s, open %s", closeStr, openStr);
   } else {
-    snprintf(msg, sizeof(msg), "Midday window 3: off today (sun doesn't cross az %.0f-%.0f)",
-             MIDDAY_CLOSE_AZIMUTH, MIDDAY_OPEN_AZIMUTH);
+    snprintf(msg, sizeof(msg), "Midday window 3: off today");
   }
   Serial.println(msg);
-  WebSerial.println(msg);
+  webConsole.println(msg);
 }
 
 void formatTimeOfDay(uint32_t timeOfDay, char* buffer) {
